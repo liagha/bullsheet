@@ -18,6 +18,8 @@ pub(crate) struct Application {
     autostart_failure: Option<crate::calculator::Failure>,
     tray: Option<crate::tray::Tray>,
     tray_failure: Option<crate::calculator::Failure>,
+    updater: crate::update::Updater,
+    update_report: Option<crate::update::Report>,
     startup_hidden: bool,
     focus_requested: bool,
 }
@@ -69,6 +71,7 @@ impl Application {
         use crate::popup::{Popup, Visibility};
         use crate::shortcut::{Combination, Shortcut};
         use crate::tray::Tray;
+        use crate::update::Updater;
         use eframe::egui::{FontData, FontDefinitions, FontFamily};
         use std::sync::Arc;
         let family = "JetBrains Mono";
@@ -117,6 +120,7 @@ impl Application {
             Ok(tray) => (Some(tray), None),
             Err(failure) => (None, Some(failure)),
         };
+        let updater = Updater::new(&context.egui_ctx);
         let calculator = Calculator::new();
         let source = Source::new(String::new());
         let results = calculator.evaluate(&source, angle);
@@ -142,6 +146,8 @@ impl Application {
             autostart_failure,
             tray,
             tray_failure,
+            updater,
+            update_report: None,
             startup_hidden: !visible,
             focus_requested: visible,
         }
@@ -215,6 +221,45 @@ impl Application {
                     .size(12.0)
                     .color(Color32::from_rgb(255, 123, 114)),
             );
+        }
+        ui.add_space(16.0);
+        ui.label(
+            RichText::new(format!(
+                "Version {}",
+                crate::update::Version::current()
+            ))
+            .size(12.0)
+            .color(Color32::from_rgb(170, 176, 188)),
+        );
+        match &self.update_report {
+            Some(crate::update::Report::Updated(version)) => {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Updated to {version} — restart to apply"
+                    ))
+                    .size(11.0)
+                    .color(Color32::from_rgb(126, 231, 135)),
+                );
+            }
+            Some(crate::update::Report::Current) => {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Up to date")
+                        .size(11.0)
+                        .color(Color32::from_rgb(110, 116, 128)),
+                );
+            }
+            Some(crate::update::Report::Failed(failure)) => {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Update check failed")
+                        .size(11.0)
+                        .color(Color32::from_rgb(255, 123, 114)),
+                )
+                .on_hover_text(failure.to_string());
+            }
+            None => {}
         }
         ui.add_space(16.0);
         if ui.button("Close").clicked() {
@@ -346,6 +391,9 @@ impl eframe::App for Application {
                 context.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
             }
             None => {}
+        }
+        if let Some(report) = self.updater.report() {
+            self.update_report = Some(report);
         }
     }
 

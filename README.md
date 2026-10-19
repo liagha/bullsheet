@@ -22,6 +22,17 @@ Open Settings from the header.
 
 The window position, angle mode, and hotkey are remembered between launches.
 
+## Tray
+
+The app places an icon in the system tray.
+
+- Left-click the icon to toggle the calculator.
+- Right-click for `Show`, `Settings`, `Start with system`, and `Quit`.
+
+## Updates
+
+On launch the app checks the latest GitHub release in the background. If a newer version exists it is downloaded and installed silently; the new version runs the next time you launch the app. Nothing is shown or interrupted while you work. The current version and the result of the last check appear in Settings.
+
 ## Features
 
 - Multiline expressions with a live result on every line.

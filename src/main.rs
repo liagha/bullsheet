@@ -7,6 +7,7 @@ mod instance;
 mod popup;
 mod shortcut;
 mod tray;
+mod update;
 
 fn main() -> eframe::Result {
     application::Application::run()

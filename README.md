@@ -38,6 +38,7 @@ On launch the app checks the latest GitHub release in the background. If a newer
 - Multiline expressions with a live result on every line.
 - `DEG` / `RAD` toggle in the header.
 - Variables: `x = 7`, then `x * 6`.
+- Functions: `double(n) = n * 2`, then `double(21)`. Parameters are bound in a child scope that still sees the sheet's variables, so a function can use values assigned elsewhere, and functions can take other functions: `apply(g, a, b) = g(a, b)` then `apply(add, 2, 3)`.
 - `ans` holds the last successful result.
 - Comments with `#`.
 - Percent, factorial, implicit multiplication, and `**` as power.

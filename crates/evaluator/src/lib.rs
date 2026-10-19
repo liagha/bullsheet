@@ -156,11 +156,18 @@ impl<'a> Line<'a> {
             return Ok(Statement::Empty);
         }
         if let Some((left, right)) = code.split_once('=') {
-            let name = Identifier::try_from(left)?;
             let expression = Expression::new(right);
             if expression.is_empty() {
                 return Err(Failure::new("missing expression"));
             }
+            if let Some((name, parameters)) = Self::definition(left)? {
+                return Ok(Statement::Definition {
+                    name,
+                    parameters,
+                    expression,
+                });
+            }
+            let name = Identifier::try_from(left)?;
             return Ok(Statement::Assignment { name, expression });
         }
         let expression = Expression::new(code);
@@ -168,6 +175,27 @@ impl<'a> Line<'a> {
             return Ok(Statement::Empty);
         }
         Ok(Statement::Expression(expression))
+    }
+
+    fn definition(left: &str) -> Result<Option<(Identifier, Vec<Identifier>)>, Failure> {
+        let left = left.trim();
+        if !left.ends_with(')') {
+            return Ok(None);
+        }
+        let open = match left.find('(') {
+            Some(open) => open,
+            None => return Ok(None),
+        };
+        let name = Identifier::try_from(left[..open].trim())?;
+        let mut parameters = Vec::new();
+        for parameter in left[open + 1..left.len() - 1].split(',') {
+            let parameter = parameter.trim();
+            if parameter.is_empty() {
+                continue;
+            }
+            parameters.push(Identifier::try_from(parameter)?);
+        }
+        Ok(Some((name, parameters)))
     }
 
     fn without_comment(&self) -> &'a str {
@@ -231,6 +259,11 @@ enum Statement {
     Expression(Expression),
     Assignment {
         name: Identifier,
+        expression: Expression,
+    },
+    Definition {
+        name: Identifier,
+        parameters: Vec<Identifier>,
         expression: Expression,
     },
 }
@@ -616,6 +649,7 @@ enum Arity {
     Two,
     OneOrTwo,
     Many,
+    Exact(usize),
 }
 
 impl Arity {
@@ -625,18 +659,24 @@ impl Arity {
             Self::Two => values.len() == 2,
             Self::OneOrTwo => values.len() == 1 || values.len() == 2,
             Self::Many => !values.is_empty(),
+            Self::Exact(count) => values.len() == count,
         }
     }
 }
 
 impl std::fmt::Display for Arity {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(match self {
-            Self::One => "one argument",
-            Self::Two => "two arguments",
-            Self::OneOrTwo => "one or two arguments",
-            Self::Many => "at least one argument",
-        })
+        match self {
+            Self::One => formatter.write_str("one argument"),
+            Self::Two => formatter.write_str("two arguments"),
+            Self::OneOrTwo => formatter.write_str("one or two arguments"),
+            Self::Many => formatter.write_str("at least one argument"),
+            Self::Exact(count) => write!(
+                formatter,
+                "{count} argument{}",
+                if *count == 1 { "" } else { "s" }
+            ),
+        }
     }
 }
 
@@ -1535,68 +1575,154 @@ impl Functions {
     }
 }
 
-struct Session<'a> {
-    variables: std::collections::HashMap<Identifier, Value>,
-    answer: Option<Value>,
-    constants: &'a Constants,
-    functions: &'a Functions,
+struct Variables {
+    values: std::collections::HashMap<Identifier, Value>,
+    parent: Option<std::rc::Rc<std::cell::RefCell<Variables>>>,
 }
 
-impl<'a> Session<'a> {
-    fn new(constants: &'a Constants, functions: &'a Functions) -> Self {
-        use std::collections::HashMap;
+struct Language {
+    constants: Constants,
+    functions: Functions,
+    operators: Operators,
+}
+
+impl Language {
+    fn new(angle: Angle) -> Self {
         Self {
-            variables: HashMap::new(),
-            answer: None,
-            constants,
-            functions,
+            constants: Constants::new(),
+            functions: Functions::new(angle),
+            operators: Operators::new(),
+        }
+    }
+}
+
+struct Session {
+    variables: std::rc::Rc<std::cell::RefCell<Variables>>,
+    language: std::rc::Rc<Language>,
+    depth: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl Session {
+    fn new(language: std::rc::Rc<Language>) -> Self {
+        Self {
+            variables: std::rc::Rc::new(std::cell::RefCell::new(Variables {
+                values: std::collections::HashMap::new(),
+                parent: None,
+            })),
+            language,
+            depth: std::rc::Rc::new(std::cell::Cell::new(0)),
         }
     }
 
     fn lookup(&self, name: &Identifier) -> Result<Value, Failure> {
         if name.is_answer() {
             return self
-                .answer
-                .clone()
+                .variable(name)
                 .ok_or_else(|| Failure::new("ans is not defined"));
         }
-        if let Some(value) = self.functions.find(name) {
+        if let Some(value) = self.variable(name) {
             return Ok(value);
         }
-        if let Some(value) = self.constants.find(name) {
-            return Ok(Value::new(value));
+        if let Some(value) = self.language.functions.find(name) {
+            return Ok(value);
         }
-        if let Some(value) = self.variables.get(name) {
-            return Ok(value.clone());
+        if let Some(value) = self.language.constants.find(name) {
+            return Ok(Value::new(value));
         }
         Err(Failure::new(format!("unknown name {name}")))
     }
 
-    fn assign(&mut self, name: Identifier, value: Value) -> Result<(), Failure> {
-        if name.is_answer() || self.constants.contains(&name) || self.functions.contains(&name) {
+    fn variable(&self, name: &Identifier) -> Option<Value> {
+        let mut current = Some(std::rc::Rc::clone(&self.variables));
+        while let Some(scope) = current {
+            let borrow = scope.borrow();
+            if let Some(value) = borrow.values.get(name) {
+                return Some(value.clone());
+            }
+            current = borrow.parent.clone();
+        }
+        None
+    }
+
+    fn assign(&self, name: Identifier, value: Value) -> Result<(), Failure> {
+        if name.is_answer()
+            || self.language.constants.contains(&name)
+            || self.language.functions.contains(&name)
+        {
             return Err(Failure::new(format!("{name} is reserved")));
         }
-        self.variables.insert(name, value);
+        self.variables.borrow_mut().values.insert(name, value);
         Ok(())
     }
 
-    fn remember(&mut self, value: Value) {
-        self.answer = Some(value);
+    fn remember(&self, value: Value) {
+        self.variables
+            .borrow_mut()
+            .values
+            .insert(Identifier::new("ans"), value);
     }
 }
 
-struct Parser<'operators, 'session, 'data> {
-    tokens: Tokens,
-    operators: &'operators Operators,
-    session: &'session mut Session<'data>,
+struct Defined {
+    name: Identifier,
+    parameters: Vec<Identifier>,
+    body: Expression,
+    scope: std::rc::Weak<std::cell::RefCell<Variables>>,
+    language: std::rc::Rc<Language>,
+    depth: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
-impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
-    fn new(
-        tokens: Tokens,
-        operators: &'operators Operators,
-        session: &'session mut Session<'data>,
-    ) -> Self {
+impl Defined {
+    fn evaluate(&self, values: &[Value]) -> Result<Value, Failure> {
+        let scope = self
+            .scope
+            .upgrade()
+            .ok_or_else(|| Failure::new("the definition is out of scope"))?;
+        let mut bound = std::collections::HashMap::new();
+        for (parameter, value) in self.parameters.iter().zip(values.iter()) {
+            bound.insert(parameter.clone(), value.clone());
+        }
+        let session = Session {
+            variables: std::rc::Rc::new(std::cell::RefCell::new(Variables {
+                values: bound,
+                parent: Some(scope),
+            })),
+            language: std::rc::Rc::clone(&self.language),
+            depth: std::rc::Rc::clone(&self.depth),
+        };
+        let mut lexer = Lexer::new(&self.body);
+        let tokens = lexer.tokens()?;
+        Parser::new(tokens, &session.language.operators, &session).value()
+    }
+}
+
+impl Callable for Defined {
+    fn name(&self) -> Text {
+        Text::new(self.name.to_string())
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Exact(self.parameters.len()))?;
+        let depth = self.depth.get() + 1;
+        if depth > 64 {
+            return Err(Failure::new("recursion is too deep"));
+        }
+        self.depth.set(depth);
+        let result = self.evaluate(values);
+        self.depth.set(depth - 1);
+        result
+    }
+}
+
+struct Parser<'a> {
+    tokens: Tokens,
+    operators: &'a Operators,
+    session: &'a Session,
+}
+
+impl<'a> Parser<'a> {
+    fn new(tokens: Tokens, operators: &'a Operators, session: &'a Session) -> Self {
         Self {
             tokens,
             operators,
@@ -1761,40 +1887,29 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
     }
 }
 
-pub struct Calculator {
-    constants: Constants,
-}
+pub struct Calculator;
 
 impl Calculator {
     pub fn new() -> Self {
-        Self {
-            constants: Constants::new(),
-        }
+        Self
     }
 
     pub fn evaluate(&self, source: &Source, angle: Angle) -> Results {
-        let functions = Functions::new(angle);
-        let operators = Operators::new();
-        let mut session = Session::new(&self.constants, &functions);
+        let session = Session::new(std::rc::Rc::new(Language::new(angle)));
         let mut evaluations = Vec::with_capacity(source.line_count());
         evaluations.extend(
             source
                 .lines()
-                .map(|line| self.evaluate_line(line, &mut session, &operators)),
+                .map(|line| self.evaluate_line(line, &session)),
         );
         Results::from(evaluations)
     }
 
-    fn evaluate_line(
-        &self,
-        line: Line<'_>,
-        session: &mut Session<'_>,
-        operators: &Operators,
-    ) -> Value {
+    fn evaluate_line(&self, line: Line<'_>, session: &Session) -> Value {
         match line.statement() {
             Ok(Statement::Empty) => Value::new(Blank::new()),
             Ok(Statement::Expression(expression)) => {
-                match self.evaluate_expression(&expression, session, operators) {
+                match self.evaluate_expression(&expression, session) {
                     Ok(value) => {
                         session.remember(value.clone());
                         value
@@ -1803,7 +1918,7 @@ impl Calculator {
                 }
             }
             Ok(Statement::Assignment { name, expression }) => {
-                match self.evaluate_expression(&expression, session, operators) {
+                match self.evaluate_expression(&expression, session) {
                     Ok(value) => match session.assign(name, value.clone()) {
                         Ok(()) => {
                             session.remember(value.clone());
@@ -1814,6 +1929,27 @@ impl Calculator {
                     Err(failure) => Value::new(failure),
                 }
             }
+            Ok(Statement::Definition {
+                name,
+                parameters,
+                expression,
+            }) => {
+                let function = Value::new(Function::new(Defined {
+                    name: name.clone(),
+                    parameters,
+                    body: expression,
+                    scope: std::rc::Rc::downgrade(&session.variables),
+                    language: std::rc::Rc::clone(&session.language),
+                    depth: std::rc::Rc::clone(&session.depth),
+                }));
+                match session.assign(name, function.clone()) {
+                    Ok(()) => {
+                        session.remember(function.clone());
+                        function
+                    }
+                    Err(failure) => Value::new(failure),
+                }
+            }
             Err(failure) => Value::new(failure),
         }
     }
@@ -1821,12 +1957,11 @@ impl Calculator {
     fn evaluate_expression(
         &self,
         expression: &Expression,
-        session: &mut Session<'_>,
-        operators: &Operators,
+        session: &Session,
     ) -> Result<Value, Failure> {
         let mut lexer = Lexer::new(expression);
         let tokens = lexer.tokens()?;
-        let value = Parser::new(tokens, operators, session).value()?;
+        let value = Parser::new(tokens, &session.language.operators, session).value()?;
         if value
             .cast::<Number>()
             .is_some_and(|number| number.value().is_nan())

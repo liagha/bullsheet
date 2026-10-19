@@ -33,6 +33,7 @@ impl Application {
         let hidden = std::env::args().any(|argument| argument == "--hidden");
         let viewport = eframe::egui::ViewportBuilder::default()
             .with_title("bullsheet")
+            .with_icon(std::sync::Arc::new(crate::icon::Icon::new().data()))
             .with_inner_size([640.0, 440.0])
             .with_decorations(false)
             .with_transparent(false)

@@ -6,11 +6,12 @@ pub(crate) struct Application {
     calculator: evaluator::Calculator,
     results: evaluator::Results,
     angle: evaluator::Angle,
+    renderers: crate::render::Renderers,
     decorations: crate::decorations::Decorations,
     combination: crate::shortcut::Combination,
     popup: crate::popup::Popup,
     shortcut: Option<crate::shortcut::Shortcut>,
-    shortcut_failure: Option<element::Presentation>,
+    shortcut_failure: Option<crate::render::Presentation>,
     settings_open: bool,
     settings_shortcut: String,
     settings_failure: Option<element::Failure>,
@@ -66,11 +67,12 @@ impl Application {
         use crate::autostart::Autostart;
         use crate::decorations::Decorations;
         use crate::popup::{Popup, Visibility};
+        use crate::render::{Presentation, Renderers};
         use crate::shortcut::{Combination, Shortcut};
         use crate::tray::Tray;
         use crate::update::Updater;
         use eframe::egui::{FontData, FontDefinitions, FontFamily};
-        use element::{Failure, Presentation};
+        use element::Failure;
         use evaluator::{Angle, Calculator, Source};
         use std::sync::Arc;
         let family = "JetBrains Mono";
@@ -129,6 +131,7 @@ impl Application {
             calculator,
             results,
             angle,
+            renderers: Renderers::new(),
             decorations: Decorations::new(),
             combination,
             popup: Popup::new(if visible {
@@ -401,7 +404,6 @@ impl eframe::App for Application {
     }
 
     fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
-        use evaluator::Evaluation;
         use eframe::egui::{
             self, Align2, Color32, FontId, Key, Rect, RichText, Sense, Stroke, Vec2,
         };
@@ -521,15 +523,18 @@ impl eframe::App for Application {
                         let viewport = ui.clip_rect();
                         let spacing = 14.0;
                         let mut gutter_width: f32 = 170.0;
-                        for evaluation in &self.results {
-                            let text = match evaluation {
-                                Evaluation::Value(value) => value.to_string(),
-                                Evaluation::Failure(failure) => failure.to_string(),
-                                Evaluation::Blank => continue,
+                        for value in &self.results {
+                            let shown = match self.renderers.render(value) {
+                                Some(shown) => shown,
+                                None => continue,
                             };
                             let width = ui
                                 .painter()
-                                .layout_no_wrap(text, font.clone(), Color32::WHITE)
+                                .layout_no_wrap(
+                                    shown.text.to_string(),
+                                    font.clone(),
+                                    Color32::WHITE,
+                                )
                                 .size()
                                 .x;
                             gutter_width = gutter_width.max(width + 16.0);
@@ -583,20 +588,13 @@ impl eframe::App for Application {
                         );
                         let painter = ui.painter().with_clip_rect(gutter_rect);
                         for (index, placed) in output.galley.rows.iter().enumerate() {
-                            let evaluation = match self.results.get(index) {
-                                Some(evaluation) => evaluation,
+                            let value = match self.results.get(index) {
+                                Some(value) => value,
                                 None => continue,
                             };
-                            let (text, color) = match evaluation {
-                                Evaluation::Value(value) => (
-                                    value.to_string(),
-                                    Color32::from_rgb(126, 231, 135),
-                                ),
-                                Evaluation::Failure(failure) => (
-                                    failure.to_string(),
-                                    Color32::from_rgb(255, 123, 114),
-                                ),
-                                Evaluation::Blank => continue,
+                            let shown = match self.renderers.render(value) {
+                                Some(shown) => shown,
+                                None => continue,
                             };
                             let top = output.galley_pos.y + placed.pos.y;
                             let bottom = top + placed.row.size.y;
@@ -607,7 +605,7 @@ impl eframe::App for Application {
                             if !rect.intersects(viewport) {
                                 continue;
                             }
-                            if let Evaluation::Value(value) = evaluation {
+                            if let Some(plain) = &shown.plain {
                                 let response = ui
                                     .interact(
                                         rect,
@@ -623,11 +621,12 @@ impl eframe::App for Application {
                                     );
                                 }
                                 if response.clicked() {
-                                    context.copy_text(value.plain().to_string());
+                                    context.copy_text(plain.to_string());
                                 }
                             }
+                            let text = shown.text.to_string();
                             let text_width = painter
-                                .layout_no_wrap(text.clone(), font.clone(), color)
+                                .layout_no_wrap(text.clone(), font.clone(), shown.color)
                                 .size()
                                 .x;
                             let available_width = gutter_width - 8.0;
@@ -643,7 +642,7 @@ impl eframe::App for Application {
                                 Align2::RIGHT_CENTER,
                                 text,
                                 text_font,
-                                color,
+                                shown.color,
                             );
                         }
                     });

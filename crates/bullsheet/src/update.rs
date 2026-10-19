@@ -1,4 +1,5 @@
-use element::{Failure, Presentation};
+use crate::render::Presentation;
+use element::Failure;
 
 const OWNER: &str = "liagha";
 const REPOSITORY: &str = "bullsheet";

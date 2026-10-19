@@ -6,6 +6,7 @@ mod decorations;
 mod icon;
 mod instance;
 mod popup;
+mod render;
 mod shortcut;
 mod tray;
 mod update;

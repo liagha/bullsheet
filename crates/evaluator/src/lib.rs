@@ -1,4 +1,4 @@
-use element::{Failure, Value};
+use element::{Blank, Callable, Failure, Function, Number, Text, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Identifier(String);
@@ -71,21 +71,17 @@ impl std::str::FromStr for Angle {
 }
 
 impl Angle {
-    pub(crate) fn to_radians(self, value: Value) -> Value {
+    pub(crate) fn to_radians(self, value: Number) -> Number {
         match self {
             Self::Radians => value,
-            Self::Degrees => {
-                value.multiply(Value::from(std::f64::consts::PI / 180.0))
-            }
+            Self::Degrees => Number::new(value.value() * std::f64::consts::PI / 180.0),
         }
     }
 
-    pub(crate) fn from_radians(self, value: Value) -> Value {
+    pub(crate) fn from_radians(self, value: Number) -> Number {
         match self {
             Self::Radians => value,
-            Self::Degrees => {
-                value.multiply(Value::from(180.0 / std::f64::consts::PI))
-            }
+            Self::Degrees => Number::new(value.value() * 180.0 / std::f64::consts::PI),
         }
     }
 
@@ -239,26 +235,25 @@ enum Statement {
     },
 }
 
-#[derive(Debug)]
-pub struct Results(Vec<Evaluation>);
+pub struct Results(Vec<Value>);
 
 impl std::ops::Deref for Results {
-    type Target = [Evaluation];
+    type Target = [Value];
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl From<Vec<Evaluation>> for Results {
-    fn from(evaluations: Vec<Evaluation>) -> Self {
+impl From<Vec<Value>> for Results {
+    fn from(evaluations: Vec<Value>) -> Self {
         Self(evaluations)
     }
 }
 
 impl IntoIterator for Results {
-    type Item = Evaluation;
-    type IntoIter = std::vec::IntoIter<Evaluation>;
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -266,19 +261,12 @@ impl IntoIterator for Results {
 }
 
 impl<'a> IntoIterator for &'a Results {
-    type Item = &'a Evaluation;
-    type IntoIter = std::slice::Iter<'a, Evaluation>;
+    type Item = &'a Value;
+    type IntoIter = std::slice::Iter<'a, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
     }
-}
-
-#[derive(Debug)]
-pub enum Evaluation {
-    Blank,
-    Value(Value),
-    Failure(Failure),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -319,7 +307,7 @@ impl TryFrom<char> for Symbol {
 
 #[derive(Clone, Debug)]
 enum Token {
-    Number(Value),
+    Number(Number),
     Name(Identifier),
     Symbol(Symbol),
     LeftParenthesis,
@@ -339,7 +327,7 @@ impl Token {
 impl std::fmt::Display for Token {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Number(value) => write!(formatter, "{value}"),
+            Self::Number(number) => write!(formatter, "{}", number.value()),
             Self::Name(name) => write!(formatter, "{name}"),
             Self::Symbol(symbol) => write!(formatter, "{symbol}"),
             Self::LeftParenthesis => formatter.write_str("("),
@@ -484,7 +472,7 @@ impl Lexer {
         let number = text
             .parse::<f64>()
             .map_err(|_| Failure::new("invalid number"))?;
-        Ok(Token::Number(Value::from(number)))
+        Ok(Token::Number(Number::new(number)))
     }
 
     fn radix(&mut self, radix: u32) -> Result<Token, Failure> {
@@ -495,7 +483,7 @@ impl Lexer {
         }
         let number = u128::from_str_radix(&text, radix)
             .map_err(|_| Failure::new("invalid number"))?;
-        Ok(Token::Number(Value::from(number as f64)))
+        Ok(Token::Number(Number::new(number as f64)))
     }
 
     fn digits(&mut self, radix: u32, text: &mut String) {
@@ -578,39 +566,47 @@ enum Associativity {
     None,
 }
 
-#[derive(Debug)]
-struct Arguments(Vec<Value>);
+struct Arguments<'a>(&'a [Value]);
 
-impl Arguments {
-    fn one(&self) -> Result<Value, Failure> {
-        if self.0.len() != 1 {
-            return Err(Failure::new("expected one argument"));
-        }
-        self.0
-            .first()
-            .copied()
-            .ok_or_else(|| Failure::new("expected one argument"))
+impl<'a> Arguments<'a> {
+    fn new(values: &'a [Value]) -> Self {
+        Self(values)
     }
 
-    fn two(&self) -> Result<(Value, Value), Failure> {
-        if self.0.len() != 2 {
-            return Err(Failure::new("expected two arguments"));
+    fn expect(&self, name: &Text, arity: Arity) -> Result<(), Failure> {
+        if arity.accepts(self.0) {
+            Ok(())
+        } else {
+            Err(Failure::new(format!("{} expects {}", name.as_ref(), arity)))
         }
-        Ok((self.0[0], self.0[1]))
+    }
+
+    fn number(&self, index: usize) -> Result<Number, Failure> {
+        self.0
+            .get(index)
+            .and_then(|value| value.cast::<Number>())
+            .copied()
+            .ok_or_else(|| Failure::new("expected a number"))
+    }
+
+    fn numbers(&self) -> Result<Vec<Number>, Failure> {
+        self.0
+            .iter()
+            .map(|value| {
+                value
+                    .cast::<Number>()
+                    .copied()
+                    .ok_or_else(|| Failure::new("expected a number"))
+            })
+            .collect()
     }
 }
 
-impl std::ops::Deref for Arguments {
+impl<'a> std::ops::Deref for Arguments<'a> {
     type Target = [Value];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Vec<Value>> for Arguments {
-    fn from(values: Vec<Value>) -> Self {
-        Self(values)
+        self.0
     }
 }
 
@@ -623,12 +619,12 @@ enum Arity {
 }
 
 impl Arity {
-    fn accepts(self, arguments: &Arguments) -> bool {
+    fn accepts(self, values: &[Value]) -> bool {
         match self {
-            Self::One => arguments.len() == 1,
-            Self::Two => arguments.len() == 2,
-            Self::OneOrTwo => arguments.len() == 1 || arguments.len() == 2,
-            Self::Many => !arguments.is_empty(),
+            Self::One => values.len() == 1,
+            Self::Two => values.len() == 2,
+            Self::OneOrTwo => values.len() == 1 || values.len() == 2,
+            Self::Many => !values.is_empty(),
         }
     }
 }
@@ -644,262 +640,696 @@ impl std::fmt::Display for Arity {
     }
 }
 
-trait Operator: std::fmt::Display {
-    fn precedence(&self) -> Precedence;
+struct Operator {
+    function: Function,
+    precedence: Precedence,
+    associativity: Associativity,
+}
 
-    fn associativity(&self) -> Associativity;
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure>;
+impl Operator {
+    fn new(callable: impl Callable, precedence: Precedence, associativity: Associativity) -> Self {
+        Self {
+            function: Function::new(callable),
+            precedence,
+            associativity,
+        }
+    }
 }
 
 struct Positive;
 
-impl std::fmt::Display for Positive {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("+")
-    }
-}
-
-impl Operator for Positive {
-    fn precedence(&self) -> Precedence {
-        Precedence::PREFIX
+impl Callable for Positive {
+    fn name(&self) -> Text {
+        Text::new("positive")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::None
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        arguments.one()
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(arguments.number(0)?))
     }
 }
 
 struct Negation;
 
-impl std::fmt::Display for Negation {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("-")
-    }
-}
-
-impl Operator for Negation {
-    fn precedence(&self) -> Precedence {
-        Precedence::PREFIX
+impl Callable for Negation {
+    fn name(&self) -> Text {
+        Text::new("negate")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::None
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        Ok(arguments.one()?.negate())
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(-arguments.number(0)?.value())))
     }
 }
 
 struct Addition;
 
-impl std::fmt::Display for Addition {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("+")
-    }
-}
-
-impl Operator for Addition {
-    fn precedence(&self) -> Precedence {
-        Precedence::ADDITION
+impl Callable for Addition {
+    fn name(&self) -> Text {
+        Text::new("add")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::Left
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        Ok(left.add(right))
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        Ok(Value::new(Number::new(left.value() + right.value())))
     }
 }
 
 struct Subtraction;
 
-impl std::fmt::Display for Subtraction {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("-")
-    }
-}
-
-impl Operator for Subtraction {
-    fn precedence(&self) -> Precedence {
-        Precedence::ADDITION
+impl Callable for Subtraction {
+    fn name(&self) -> Text {
+        Text::new("subtract")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::Left
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        Ok(left.subtract(right))
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        Ok(Value::new(Number::new(left.value() - right.value())))
     }
 }
 
 struct Multiplication;
 
-impl std::fmt::Display for Multiplication {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("*")
-    }
-}
-
-impl Operator for Multiplication {
-    fn precedence(&self) -> Precedence {
-        Precedence::MULTIPLICATION
+impl Callable for Multiplication {
+    fn name(&self) -> Text {
+        Text::new("multiply")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::Left
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        Ok(left.multiply(right))
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        Ok(Value::new(Number::new(left.value() * right.value())))
     }
 }
 
 struct Division;
 
-impl std::fmt::Display for Division {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("/")
+impl Callable for Division {
+    fn name(&self) -> Text {
+        Text::new("divide")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        if right.value() == 0.0 {
+            return Err(Failure::new("division by zero"));
+        }
+        Ok(Value::new(Number::new(left.value() / right.value())))
     }
 }
 
-impl Operator for Division {
-    fn precedence(&self) -> Precedence {
-        Precedence::MULTIPLICATION
+struct Modulo;
+
+impl Callable for Modulo {
+    fn name(&self) -> Text {
+        Text::new("mod")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::Left
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        left.divide(right)
-    }
-}
-
-struct RemainderOperator;
-
-impl std::fmt::Display for RemainderOperator {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("%")
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        if right.value() == 0.0 {
+            return Err(Failure::new("remainder by zero"));
+        }
+        Ok(Value::new(Number::new(left.value() % right.value())))
     }
 }
 
-impl Operator for RemainderOperator {
-    fn precedence(&self) -> Precedence {
-        Precedence::MULTIPLICATION
+struct Power;
+
+impl Callable for Power {
+    fn name(&self) -> Text {
+        Text::new("pow")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::Left
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        left.remainder(right)
-    }
-}
-
-struct PowerOperator;
-
-impl std::fmt::Display for PowerOperator {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("^")
-    }
-}
-
-impl Operator for PowerOperator {
-    fn precedence(&self) -> Precedence {
-        Precedence::POWER
-    }
-
-    fn associativity(&self) -> Associativity {
-        Associativity::Right
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        Ok(left.power(right))
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        Ok(Value::new(Number::new(left.value().powf(right.value()))))
     }
 }
 
 struct Factorial;
 
-impl std::fmt::Display for Factorial {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("!")
-    }
-}
-
-impl Operator for Factorial {
-    fn precedence(&self) -> Precedence {
-        Precedence::POSTFIX
+impl Callable for Factorial {
+    fn name(&self) -> Text {
+        Text::new("factorial")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::None
-    }
-
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        arguments.one()?.factorial()
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        if value < 0.0 || value.fract() != 0.0 {
+            return Err(Failure::new("factorial requires a non-negative integer"));
+        }
+        if value > 170.0 {
+            return Err(Failure::new("factorial is too large"));
+        }
+        let mut result = 1.0;
+        for number in 2..=(value as u32) {
+            result *= number as f64;
+        }
+        Ok(Value::new(Number::new(result)))
     }
 }
 
 struct Percentage;
 
-impl std::fmt::Display for Percentage {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("%")
+impl Callable for Percentage {
+    fn name(&self) -> Text {
+        Text::new("percentage")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value() / 100.0)))
     }
 }
 
-impl Operator for Percentage {
-    fn precedence(&self) -> Precedence {
-        Precedence::POSTFIX
+struct Sine {
+    angle: Angle,
+}
+
+impl Callable for Sine {
+    fn name(&self) -> Text {
+        Text::new("sin")
     }
 
-    fn associativity(&self) -> Associativity {
-        Associativity::None
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let radians = self.angle.to_radians(arguments.number(0)?);
+        Ok(Value::new(Number::new(radians.value().sin())))
+    }
+}
+
+struct Cosine {
+    angle: Angle,
+}
+
+impl Callable for Cosine {
+    fn name(&self) -> Text {
+        Text::new("cos")
     }
 
-    fn apply(&self, arguments: &Arguments) -> Result<Value, Failure> {
-        Ok(arguments.one()?.percentage())
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let radians = self.angle.to_radians(arguments.number(0)?);
+        Ok(Value::new(Number::new(radians.value().cos())))
+    }
+}
+
+struct Tangent {
+    angle: Angle,
+}
+
+impl Callable for Tangent {
+    fn name(&self) -> Text {
+        Text::new("tan")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let radians = self.angle.to_radians(arguments.number(0)?);
+        Ok(Value::new(Number::new(radians.value().tan())))
+    }
+}
+
+struct Arcsine {
+    angle: Angle,
+}
+
+impl Callable for Arcsine {
+    fn name(&self) -> Text {
+        Text::new("asin")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        if !(-1.0..=1.0).contains(&value) {
+            return Err(Failure::new(
+                "arcsine requires a number between minus one and one",
+            ));
+        }
+        Ok(Value::new(self.angle.from_radians(Number::new(value.asin()))))
+    }
+}
+
+struct Arccosine {
+    angle: Angle,
+}
+
+impl Callable for Arccosine {
+    fn name(&self) -> Text {
+        Text::new("acos")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        if !(-1.0..=1.0).contains(&value) {
+            return Err(Failure::new(
+                "arccosine requires a number between minus one and one",
+            ));
+        }
+        Ok(Value::new(self.angle.from_radians(Number::new(value.acos()))))
+    }
+}
+
+struct Arctangent {
+    angle: Angle,
+}
+
+impl Callable for Arctangent {
+    fn name(&self) -> Text {
+        Text::new("atan")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        Ok(Value::new(self.angle.from_radians(Number::new(value.atan()))))
+    }
+}
+
+struct Arctangent2 {
+    angle: Angle,
+}
+
+impl Callable for Arctangent2 {
+    fn name(&self) -> Text {
+        Text::new("atan2")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        let radians = Number::new(left.value().atan2(right.value()));
+        Ok(Value::new(self.angle.from_radians(radians)))
+    }
+}
+
+struct HyperbolicSine;
+
+impl Callable for HyperbolicSine {
+    fn name(&self) -> Text {
+        Text::new("sinh")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().sinh())))
+    }
+}
+
+struct HyperbolicCosine;
+
+impl Callable for HyperbolicCosine {
+    fn name(&self) -> Text {
+        Text::new("cosh")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().cosh())))
+    }
+}
+
+struct HyperbolicTangent;
+
+impl Callable for HyperbolicTangent {
+    fn name(&self) -> Text {
+        Text::new("tanh")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().tanh())))
+    }
+}
+
+struct SquareRoot;
+
+impl Callable for SquareRoot {
+    fn name(&self) -> Text {
+        Text::new("sqrt")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        if value < 0.0 {
+            return Err(Failure::new(
+                "square root requires a non-negative number",
+            ));
+        }
+        Ok(Value::new(Number::new(value.sqrt())))
+    }
+}
+
+struct CubeRoot;
+
+impl Callable for CubeRoot {
+    fn name(&self) -> Text {
+        Text::new("cbrt")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().cbrt())))
+    }
+}
+
+struct Absolute;
+
+impl Callable for Absolute {
+    fn name(&self) -> Text {
+        Text::new("abs")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().abs())))
+    }
+}
+
+struct NaturalLogarithm;
+
+impl Callable for NaturalLogarithm {
+    fn name(&self) -> Text {
+        Text::new("ln")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        if value <= 0.0 {
+            return Err(Failure::new("logarithm requires a positive number"));
+        }
+        Ok(Value::new(Number::new(value.ln())))
+    }
+}
+
+struct Logarithm;
+
+impl Callable for Logarithm {
+    fn name(&self) -> Text {
+        Text::new("log")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::OneOrTwo)?;
+        let value = arguments.number(0)?.value();
+        if value <= 0.0 {
+            return Err(Failure::new("logarithm requires a positive number"));
+        }
+        let result = if arguments.len() == 1 {
+            value.log10()
+        } else {
+            let base = arguments.number(1)?.value();
+            if base <= 0.0 || base == 1.0 {
+                return Err(Failure::new(
+                    "logarithm base must be positive and not one",
+                ));
+            }
+            value.log(base)
+        };
+        Ok(Value::new(Number::new(result)))
+    }
+}
+
+struct BinaryLogarithm;
+
+impl Callable for BinaryLogarithm {
+    fn name(&self) -> Text {
+        Text::new("log2")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        if value <= 0.0 {
+            return Err(Failure::new("logarithm requires a positive number"));
+        }
+        Ok(Value::new(Number::new(value.log2())))
+    }
+}
+
+struct DecimalLogarithm;
+
+impl Callable for DecimalLogarithm {
+    fn name(&self) -> Text {
+        Text::new("log10")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        if value <= 0.0 {
+            return Err(Failure::new("logarithm requires a positive number"));
+        }
+        Ok(Value::new(Number::new(value.log10())))
+    }
+}
+
+struct Exponential;
+
+impl Callable for Exponential {
+    fn name(&self) -> Text {
+        Text::new("exp")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().exp())))
+    }
+}
+
+struct Floor;
+
+impl Callable for Floor {
+    fn name(&self) -> Text {
+        Text::new("floor")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().floor())))
+    }
+}
+
+struct Ceiling;
+
+impl Callable for Ceiling {
+    fn name(&self) -> Text {
+        Text::new("ceil")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().ceil())))
+    }
+}
+
+struct Round;
+
+impl Callable for Round {
+    fn name(&self) -> Text {
+        Text::new("round")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::OneOrTwo)?;
+        let value = arguments.number(0)?.value();
+        if arguments.len() == 1 {
+            return Ok(Value::new(Number::new(value.round())));
+        }
+        let places = arguments.number(1)?.value();
+        if places < 0.0 || places.fract() != 0.0 || places > 15.0 {
+            return Err(Failure::new(
+                "round requires a whole number of places between zero and fifteen",
+            ));
+        }
+        let factor = 10.0_f64.powi(places as i32);
+        Ok(Value::new(Number::new((value * factor).round() / factor)))
+    }
+}
+
+struct Truncate;
+
+impl Callable for Truncate {
+    fn name(&self) -> Text {
+        Text::new("trunc")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        Ok(Value::new(Number::new(arguments.number(0)?.value().trunc())))
+    }
+}
+
+struct Sign;
+
+impl Callable for Sign {
+    fn name(&self) -> Text {
+        Text::new("sign")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::One)?;
+        let value = arguments.number(0)?.value();
+        let sign = if value == 0.0 { 0.0 } else { value.signum() };
+        Ok(Value::new(Number::new(sign)))
+    }
+}
+
+struct Minimum;
+
+impl Callable for Minimum {
+    fn name(&self) -> Text {
+        Text::new("min")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Many)?;
+        let numbers = arguments.numbers()?;
+        let minimum = numbers
+            .iter()
+            .map(|number| number.value())
+            .fold(f64::INFINITY, f64::min);
+        Ok(Value::new(Number::new(minimum)))
+    }
+}
+
+struct Maximum;
+
+impl Callable for Maximum {
+    fn name(&self) -> Text {
+        Text::new("max")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Many)?;
+        let numbers = arguments.numbers()?;
+        let maximum = numbers
+            .iter()
+            .map(|number| number.value())
+            .fold(f64::NEG_INFINITY, f64::max);
+        Ok(Value::new(Number::new(maximum)))
+    }
+}
+
+struct Hypotenuse;
+
+impl Callable for Hypotenuse {
+    fn name(&self) -> Text {
+        Text::new("hypot")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::Two)?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        Ok(Value::new(Number::new(
+            left.value().hypot(right.value()),
+        )))
     }
 }
 
 struct Operators {
-    prefixes: std::collections::HashMap<Symbol, Box<dyn Operator>>,
-    infixes: std::collections::HashMap<Symbol, Box<dyn Operator>>,
-    postfixes: std::collections::HashMap<Symbol, Box<dyn Operator>>,
+    prefixes: std::collections::HashMap<Symbol, Operator>,
+    infixes: std::collections::HashMap<Symbol, Operator>,
+    postfixes: std::collections::HashMap<Symbol, Operator>,
 }
 
 impl Operators {
     fn new() -> Self {
         use std::collections::HashMap;
-        let mut prefixes: HashMap<Symbol, Box<dyn Operator>> = HashMap::new();
-        prefixes.insert(Symbol::PLUS, Box::new(Positive));
-        prefixes.insert(Symbol::MINUS, Box::new(Negation));
-        let mut infixes: HashMap<Symbol, Box<dyn Operator>> = HashMap::new();
-        infixes.insert(Symbol::PLUS, Box::new(Addition));
-        infixes.insert(Symbol::MINUS, Box::new(Subtraction));
-        infixes.insert(Symbol::STAR, Box::new(Multiplication));
-        infixes.insert(Symbol::SLASH, Box::new(Division));
-        infixes.insert(Symbol::PERCENT, Box::new(RemainderOperator));
-        infixes.insert(Symbol::CARET, Box::new(PowerOperator));
-        let mut postfixes: HashMap<Symbol, Box<dyn Operator>> = HashMap::new();
-        postfixes.insert(Symbol::BANG, Box::new(Factorial));
-        postfixes.insert(Symbol::PERCENT, Box::new(Percentage));
+        let mut prefixes = HashMap::new();
+        prefixes.insert(
+            Symbol::PLUS,
+            Operator::new(Positive, Precedence::PREFIX, Associativity::None),
+        );
+        prefixes.insert(
+            Symbol::MINUS,
+            Operator::new(Negation, Precedence::PREFIX, Associativity::None),
+        );
+        let mut infixes = HashMap::new();
+        infixes.insert(
+            Symbol::PLUS,
+            Operator::new(Addition, Precedence::ADDITION, Associativity::Left),
+        );
+        infixes.insert(
+            Symbol::MINUS,
+            Operator::new(Subtraction, Precedence::ADDITION, Associativity::Left),
+        );
+        infixes.insert(
+            Symbol::STAR,
+            Operator::new(
+                Multiplication,
+                Precedence::MULTIPLICATION,
+                Associativity::Left,
+            ),
+        );
+        infixes.insert(
+            Symbol::SLASH,
+            Operator::new(Division, Precedence::MULTIPLICATION, Associativity::Left),
+        );
+        infixes.insert(
+            Symbol::PERCENT,
+            Operator::new(Modulo, Precedence::MULTIPLICATION, Associativity::Left),
+        );
+        infixes.insert(
+            Symbol::CARET,
+            Operator::new(Power, Precedence::POWER, Associativity::Right),
+        );
+        let mut postfixes = HashMap::new();
+        postfixes.insert(
+            Symbol::BANG,
+            Operator::new(Factorial, Precedence::POSTFIX, Associativity::None),
+        );
+        postfixes.insert(
+            Symbol::PERCENT,
+            Operator::new(Percentage, Precedence::POSTFIX, Associativity::None),
+        );
         Self {
             prefixes,
             infixes,
@@ -907,587 +1337,50 @@ impl Operators {
         }
     }
 
-    fn prefix(&self, symbol: &Symbol) -> Option<&dyn Operator> {
-        self.prefixes.get(symbol).map(|operator| operator.as_ref())
+    fn prefix(&self, symbol: &Symbol) -> Option<&Operator> {
+        self.prefixes.get(symbol)
     }
 
-    fn infix(&self, symbol: &Symbol) -> Option<&dyn Operator> {
-        self.infixes.get(symbol).map(|operator| operator.as_ref())
+    fn infix(&self, symbol: &Symbol) -> Option<&Operator> {
+        self.infixes.get(symbol)
     }
 
-    fn postfix(&self, symbol: &Symbol) -> Option<&dyn Operator> {
-        self.postfixes.get(symbol).map(|operator| operator.as_ref())
+    fn postfix(&self, symbol: &Symbol) -> Option<&Operator> {
+        self.postfixes.get(symbol)
     }
 
-    fn multiplication(&self) -> Option<&dyn Operator> {
+    fn multiplication(&self) -> Option<&Operator> {
         self.infix(&Symbol::STAR)
     }
-}
 
-trait Calculation: std::fmt::Display {
-    fn arity(&self) -> Arity;
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure>;
-
-    fn name(&self) -> Identifier {
-        Identifier::new(&self.to_string())
-    }
-
-    fn validate(&self, arguments: &Arguments) -> Result<(), Failure> {
-        if self.arity().accepts(arguments) {
-            Ok(())
-        } else {
-            Err(Failure::new(format!(
-                "{} expects {}",
-                self.name(),
-                self.arity()
-            )))
-        }
-    }
-}
-
-struct Sine;
-
-impl std::fmt::Display for Sine {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("sin")
-    }
-}
-
-impl Calculation for Sine {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure> {
-        Ok(angle.to_radians(arguments.one()?).sine())
-    }
-}
-
-struct Cosine;
-
-impl std::fmt::Display for Cosine {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("cos")
-    }
-}
-
-impl Calculation for Cosine {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure> {
-        Ok(angle.to_radians(arguments.one()?).cosine())
-    }
-}
-
-struct Tangent;
-
-impl std::fmt::Display for Tangent {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("tan")
-    }
-}
-
-impl Calculation for Tangent {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure> {
-        Ok(angle.to_radians(arguments.one()?).tangent())
-    }
-}
-
-struct Arcsine;
-
-impl std::fmt::Display for Arcsine {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("asin")
-    }
-}
-
-impl Calculation for Arcsine {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure> {
-        Ok(angle.from_radians(arguments.one()?.arcsine()?))
-    }
-}
-
-struct Arccosine;
-
-impl std::fmt::Display for Arccosine {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("acos")
-    }
-}
-
-impl Calculation for Arccosine {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure> {
-        Ok(angle.from_radians(arguments.one()?.arccosine()?))
-    }
-}
-
-struct Arctangent;
-
-impl std::fmt::Display for Arctangent {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("atan")
-    }
-}
-
-impl Calculation for Arctangent {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure> {
-        Ok(angle.from_radians(arguments.one()?.arctangent()))
-    }
-}
-
-struct Arctangent2;
-
-impl std::fmt::Display for Arctangent2 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("atan2")
-    }
-}
-
-impl Calculation for Arctangent2 {
-    fn arity(&self) -> Arity {
-        Arity::Two
-    }
-
-    fn calculate(&self, arguments: &Arguments, angle: Angle) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        Ok(angle.from_radians(left.arctangent2(right)))
-    }
-}
-
-struct HyperbolicSine;
-
-impl std::fmt::Display for HyperbolicSine {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("sinh")
-    }
-}
-
-impl Calculation for HyperbolicSine {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.hyperbolic_sine())
-    }
-}
-
-struct HyperbolicCosine;
-
-impl std::fmt::Display for HyperbolicCosine {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("cosh")
-    }
-}
-
-impl Calculation for HyperbolicCosine {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.hyperbolic_cosine())
-    }
-}
-
-struct HyperbolicTangent;
-
-impl std::fmt::Display for HyperbolicTangent {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("tanh")
-    }
-}
-
-impl Calculation for HyperbolicTangent {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.hyperbolic_tangent())
-    }
-}
-
-struct SquareRoot;
-
-impl std::fmt::Display for SquareRoot {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("sqrt")
-    }
-}
-
-impl Calculation for SquareRoot {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        arguments.one()?.square_root()
-    }
-}
-
-struct CubeRoot;
-
-impl std::fmt::Display for CubeRoot {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("cbrt")
-    }
-}
-
-impl Calculation for CubeRoot {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.cube_root())
-    }
-}
-
-struct Absolute;
-
-impl std::fmt::Display for Absolute {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("abs")
-    }
-}
-
-impl Calculation for Absolute {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.absolute())
-    }
-}
-
-struct NaturalLogarithm;
-
-impl std::fmt::Display for NaturalLogarithm {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("ln")
-    }
-}
-
-impl Calculation for NaturalLogarithm {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        arguments.one()?.natural_logarithm()
-    }
-}
-
-struct Logarithm;
-
-impl std::fmt::Display for Logarithm {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("log")
-    }
-}
-
-impl Calculation for Logarithm {
-    fn arity(&self) -> Arity {
-        Arity::OneOrTwo
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        match arguments.len() {
-            1 => arguments.one()?.decimal_logarithm(),
-            2 => {
-                let (value, base) = arguments.two()?;
-                value.logarithm(base)
-            }
-            _ => Err(Failure::new("log expects one or two arguments")),
-        }
-    }
-}
-
-struct BinaryLogarithm;
-
-impl std::fmt::Display for BinaryLogarithm {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("log2")
-    }
-}
-
-impl Calculation for BinaryLogarithm {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        arguments.one()?.binary_logarithm()
-    }
-}
-
-struct DecimalLogarithm;
-
-impl std::fmt::Display for DecimalLogarithm {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("log10")
-    }
-}
-
-impl Calculation for DecimalLogarithm {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        arguments.one()?.decimal_logarithm()
-    }
-}
-
-struct Exponential;
-
-impl std::fmt::Display for Exponential {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("exp")
-    }
-}
-
-impl Calculation for Exponential {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.exponential())
-    }
-}
-
-struct Floor;
-
-impl std::fmt::Display for Floor {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("floor")
-    }
-}
-
-impl Calculation for Floor {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.floor())
-    }
-}
-
-struct Ceiling;
-
-impl std::fmt::Display for Ceiling {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("ceil")
-    }
-}
-
-impl Calculation for Ceiling {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.ceiling())
-    }
-}
-
-struct Round;
-
-impl std::fmt::Display for Round {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("round")
-    }
-}
-
-impl Calculation for Round {
-    fn arity(&self) -> Arity {
-        Arity::OneOrTwo
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        match arguments.len() {
-            1 => Ok(arguments.one()?.round()),
-            2 => {
-                let (value, places) = arguments.two()?;
-                value.round_to(places)
-            }
-            _ => Err(Failure::new("round expects one or two arguments")),
-        }
-    }
-}
-
-struct Truncate;
-
-impl std::fmt::Display for Truncate {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("trunc")
-    }
-}
-
-impl Calculation for Truncate {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.truncate())
-    }
-}
-
-struct Sign;
-
-impl std::fmt::Display for Sign {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("sign")
-    }
-}
-
-impl Calculation for Sign {
-    fn arity(&self) -> Arity {
-        Arity::One
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Ok(arguments.one()?.sign())
-    }
-}
-
-struct Minimum;
-
-impl std::fmt::Display for Minimum {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("min")
-    }
-}
-
-impl Calculation for Minimum {
-    fn arity(&self) -> Arity {
-        Arity::Many
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Value::minimum(arguments)
-    }
-}
-
-struct Maximum;
-
-impl std::fmt::Display for Maximum {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("max")
-    }
-}
-
-impl Calculation for Maximum {
-    fn arity(&self) -> Arity {
-        Arity::Many
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        Value::maximum(arguments)
-    }
-}
-
-struct Power;
-
-impl std::fmt::Display for Power {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("pow")
-    }
-}
-
-impl Calculation for Power {
-    fn arity(&self) -> Arity {
-        Arity::Two
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        Ok(left.power(right))
-    }
-}
-
-struct Remainder;
-
-impl std::fmt::Display for Remainder {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("mod")
-    }
-}
-
-impl Calculation for Remainder {
-    fn arity(&self) -> Arity {
-        Arity::Two
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        left.remainder(right)
-    }
-}
-
-struct Hypotenuse;
-
-impl std::fmt::Display for Hypotenuse {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("hypot")
-    }
-}
-
-impl Calculation for Hypotenuse {
-    fn arity(&self) -> Arity {
-        Arity::Two
-    }
-
-    fn calculate(&self, arguments: &Arguments, _: Angle) -> Result<Value, Failure> {
-        let (left, right) = arguments.two()?;
-        Ok(left.hypotenuse(right))
+    fn value(&self, symbol: &Symbol) -> Option<Value> {
+        self.infix(symbol)
+            .or_else(|| self.prefix(symbol))
+            .or_else(|| self.postfix(symbol))
+            .map(|operator| Value::new(operator.function.clone()))
     }
 }
 
 struct Constants {
-    values: std::collections::HashMap<Identifier, Value>,
+    values: std::collections::HashMap<Identifier, Number>,
 }
 
 impl Constants {
     fn new() -> Self {
         use std::collections::HashMap;
         let mut values = HashMap::new();
-        values.insert(Identifier::new("pi"), Value::from(std::f64::consts::PI));
-        values.insert(Identifier::new("tau"), Value::from(std::f64::consts::TAU));
-        values.insert(Identifier::new("e"), Value::from(std::f64::consts::E));
+        values.insert(Identifier::new("pi"), Number::new(std::f64::consts::PI));
+        values.insert(Identifier::new("tau"), Number::new(std::f64::consts::TAU));
+        values.insert(Identifier::new("e"), Number::new(std::f64::consts::E));
         values.insert(
             Identifier::new("phi"),
-            Value::from((1.0 + 5.0_f64.sqrt()) / 2.0),
+            Number::new((1.0 + 5.0_f64.sqrt()) / 2.0),
         );
-        values.insert(Identifier::new("inf"), Value::from(f64::INFINITY));
+        values.insert(Identifier::new("inf"), Number::new(f64::INFINITY));
         Self { values }
     }
 
-    fn find(&self, name: &Identifier) -> Option<Value> {
+    fn find(&self, name: &Identifier) -> Option<Number> {
         self.values.get(name).copied()
     }
 
@@ -1496,56 +1389,145 @@ impl Constants {
     }
 }
 
-struct Calculations {
-    entries: std::collections::HashMap<Identifier, Box<dyn Calculation>>,
+struct Functions {
+    entries: std::collections::HashMap<Identifier, Value>,
 }
 
-impl Calculations {
-    fn new() -> Self {
+impl Functions {
+    fn new(angle: Angle) -> Self {
         use std::collections::HashMap;
-        let mut calculations = Self {
-            entries: HashMap::new(),
-        };
-        calculations.insert(Box::new(Sine));
-        calculations.insert(Box::new(Cosine));
-        calculations.insert(Box::new(Tangent));
-        calculations.insert(Box::new(Arcsine));
-        calculations.insert(Box::new(Arccosine));
-        calculations.insert(Box::new(Arctangent));
-        calculations.insert(Box::new(Arctangent2));
-        calculations.insert(Box::new(HyperbolicSine));
-        calculations.insert(Box::new(HyperbolicCosine));
-        calculations.insert(Box::new(HyperbolicTangent));
-        calculations.insert(Box::new(SquareRoot));
-        calculations.insert(Box::new(CubeRoot));
-        calculations.insert(Box::new(Absolute));
-        calculations.insert(Box::new(NaturalLogarithm));
-        calculations.insert(Box::new(Logarithm));
-        calculations.insert(Box::new(BinaryLogarithm));
-        calculations.insert(Box::new(DecimalLogarithm));
-        calculations.insert(Box::new(Exponential));
-        calculations.insert(Box::new(Floor));
-        calculations.insert(Box::new(Ceiling));
-        calculations.insert(Box::new(Round));
-        calculations.insert(Box::new(Truncate));
-        calculations.insert(Box::new(Sign));
-        calculations.insert(Box::new(Minimum));
-        calculations.insert(Box::new(Maximum));
-        calculations.insert(Box::new(Power));
-        calculations.insert(Box::new(Remainder));
-        calculations.insert(Box::new(Hypotenuse));
-        calculations
+        let mut entries = HashMap::new();
+        entries.insert(
+            Identifier::new("positive"),
+            Value::new(Function::new(Positive)),
+        );
+        entries.insert(
+            Identifier::new("negate"),
+            Value::new(Function::new(Negation)),
+        );
+        entries.insert(Identifier::new("add"), Value::new(Function::new(Addition)));
+        entries.insert(
+            Identifier::new("subtract"),
+            Value::new(Function::new(Subtraction)),
+        );
+        entries.insert(
+            Identifier::new("multiply"),
+            Value::new(Function::new(Multiplication)),
+        );
+        entries.insert(
+            Identifier::new("divide"),
+            Value::new(Function::new(Division)),
+        );
+        entries.insert(Identifier::new("mod"), Value::new(Function::new(Modulo)));
+        entries.insert(Identifier::new("pow"), Value::new(Function::new(Power)));
+        entries.insert(
+            Identifier::new("factorial"),
+            Value::new(Function::new(Factorial)),
+        );
+        entries.insert(
+            Identifier::new("percentage"),
+            Value::new(Function::new(Percentage)),
+        );
+        entries.insert(
+            Identifier::new("sin"),
+            Value::new(Function::new(Sine { angle })),
+        );
+        entries.insert(
+            Identifier::new("cos"),
+            Value::new(Function::new(Cosine { angle })),
+        );
+        entries.insert(
+            Identifier::new("tan"),
+            Value::new(Function::new(Tangent { angle })),
+        );
+        entries.insert(
+            Identifier::new("asin"),
+            Value::new(Function::new(Arcsine { angle })),
+        );
+        entries.insert(
+            Identifier::new("acos"),
+            Value::new(Function::new(Arccosine { angle })),
+        );
+        entries.insert(
+            Identifier::new("atan"),
+            Value::new(Function::new(Arctangent { angle })),
+        );
+        entries.insert(
+            Identifier::new("atan2"),
+            Value::new(Function::new(Arctangent2 { angle })),
+        );
+        entries.insert(
+            Identifier::new("sinh"),
+            Value::new(Function::new(HyperbolicSine)),
+        );
+        entries.insert(
+            Identifier::new("cosh"),
+            Value::new(Function::new(HyperbolicCosine)),
+        );
+        entries.insert(
+            Identifier::new("tanh"),
+            Value::new(Function::new(HyperbolicTangent)),
+        );
+        entries.insert(
+            Identifier::new("sqrt"),
+            Value::new(Function::new(SquareRoot)),
+        );
+        entries.insert(
+            Identifier::new("cbrt"),
+            Value::new(Function::new(CubeRoot)),
+        );
+        entries.insert(
+            Identifier::new("abs"),
+            Value::new(Function::new(Absolute)),
+        );
+        entries.insert(
+            Identifier::new("ln"),
+            Value::new(Function::new(NaturalLogarithm)),
+        );
+        entries.insert(
+            Identifier::new("log"),
+            Value::new(Function::new(Logarithm)),
+        );
+        entries.insert(
+            Identifier::new("log2"),
+            Value::new(Function::new(BinaryLogarithm)),
+        );
+        entries.insert(
+            Identifier::new("log10"),
+            Value::new(Function::new(DecimalLogarithm)),
+        );
+        entries.insert(
+            Identifier::new("exp"),
+            Value::new(Function::new(Exponential)),
+        );
+        entries.insert(Identifier::new("floor"), Value::new(Function::new(Floor)));
+        entries.insert(
+            Identifier::new("ceil"),
+            Value::new(Function::new(Ceiling)),
+        );
+        entries.insert(Identifier::new("round"), Value::new(Function::new(Round)));
+        entries.insert(
+            Identifier::new("trunc"),
+            Value::new(Function::new(Truncate)),
+        );
+        entries.insert(Identifier::new("sign"), Value::new(Function::new(Sign)));
+        entries.insert(
+            Identifier::new("min"),
+            Value::new(Function::new(Minimum)),
+        );
+        entries.insert(
+            Identifier::new("max"),
+            Value::new(Function::new(Maximum)),
+        );
+        entries.insert(
+            Identifier::new("hypot"),
+            Value::new(Function::new(Hypotenuse)),
+        );
+        Self { entries }
     }
 
-    fn insert(&mut self, calculation: Box<dyn Calculation>) {
-        let name = calculation.name();
-        self.entries.insert(name, calculation);
-    }
-
-    fn find(&self, name: &Identifier) -> Option<&dyn Calculation> {
-        self.entries
-            .get(name)
-            .map(|calculation| calculation.as_ref())
+    fn find(&self, name: &Identifier) -> Option<Value> {
+        self.entries.get(name).cloned()
     }
 
     fn contains(&self, name: &Identifier) -> bool {
@@ -1557,23 +1539,17 @@ struct Session<'a> {
     variables: std::collections::HashMap<Identifier, Value>,
     answer: Option<Value>,
     constants: &'a Constants,
-    calculations: &'a Calculations,
-    angle: Angle,
+    functions: &'a Functions,
 }
 
 impl<'a> Session<'a> {
-    fn new(
-        constants: &'a Constants,
-        calculations: &'a Calculations,
-        angle: Angle,
-    ) -> Self {
+    fn new(constants: &'a Constants, functions: &'a Functions) -> Self {
         use std::collections::HashMap;
         Self {
             variables: HashMap::new(),
             answer: None,
             constants,
-            calculations,
-            angle,
+            functions,
         }
     }
 
@@ -1581,22 +1557,23 @@ impl<'a> Session<'a> {
         if name.is_answer() {
             return self
                 .answer
+                .clone()
                 .ok_or_else(|| Failure::new("ans is not defined"));
         }
-        if let Some(value) = self.constants.find(name) {
+        if let Some(value) = self.functions.find(name) {
             return Ok(value);
         }
+        if let Some(value) = self.constants.find(name) {
+            return Ok(Value::new(value));
+        }
         if let Some(value) = self.variables.get(name) {
-            return Ok(*value);
+            return Ok(value.clone());
         }
         Err(Failure::new(format!("unknown name {name}")))
     }
 
     fn assign(&mut self, name: Identifier, value: Value) -> Result<(), Failure> {
-        if name.is_answer()
-            || self.constants.contains(&name)
-            || self.calculations.contains(&name)
-        {
+        if name.is_answer() || self.constants.contains(&name) || self.functions.contains(&name) {
             return Err(Failure::new(format!("{name} is reserved")));
         }
         self.variables.insert(name, value);
@@ -1605,19 +1582,6 @@ impl<'a> Session<'a> {
 
     fn remember(&mut self, value: Value) {
         self.answer = Some(value);
-    }
-
-    fn calculate(
-        &self,
-        name: &Identifier,
-        arguments: Arguments,
-    ) -> Result<Value, Failure> {
-        let calculation = self
-            .calculations
-            .find(name)
-            .ok_or_else(|| Failure::new(format!("unknown function {name}")))?;
-        calculation.validate(&arguments)?;
-        calculation.calculate(&arguments, self.angle)
     }
 }
 
@@ -1664,18 +1628,19 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
                     && self.tokens.peek_after(1).is_some_and(Token::starts_value);
                 if !percentage_remainder {
                     if let Some(operator) = self.operators.postfix(symbol) {
-                        let precedence = operator.precedence();
+                        let precedence = operator.precedence;
+                        let function = operator.function.clone();
                         if precedence >= minimum {
                             self.tokens.bump();
-                            let arguments = Arguments::from(vec![left]);
-                            left = operator.apply(&arguments)?;
+                            left = function.call(&[left])?;
                             continue;
                         }
                     }
                 }
                 if let Some(operator) = self.operators.infix(symbol) {
-                    let precedence = operator.precedence();
-                    let associativity = operator.associativity();
+                    let precedence = operator.precedence;
+                    let associativity = operator.associativity;
+                    let function = operator.function.clone();
                     if precedence < minimum {
                         break;
                     }
@@ -1685,30 +1650,20 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
                         _ => precedence.next(),
                     };
                     let right = self.expression(next_minimum)?;
-                    let arguments = Arguments::from(vec![left, right]);
-                    let operator = self
-                        .operators
-                        .infix(symbol)
-                        .ok_or_else(|| Failure::new("missing operator"))?;
-                    left = operator.apply(&arguments)?;
+                    left = function.call(&[left, right])?;
                     continue;
                 }
             }
             if token.starts_value() {
-                let precedence = match self.operators.multiplication() {
-                    Some(operator) => operator.precedence(),
+                let (precedence, function) = match self.operators.multiplication() {
+                    Some(operator) => (operator.precedence, operator.function.clone()),
                     None => break,
                 };
                 if precedence < minimum {
                     break;
                 }
                 let right = self.expression(precedence.next())?;
-                let arguments = Arguments::from(vec![left, right]);
-                let operator = self
-                    .operators
-                    .multiplication()
-                    .ok_or_else(|| Failure::new("missing operator"))?;
-                left = operator.apply(&arguments)?;
+                left = function.call(&[left, right])?;
                 continue;
             }
             break;
@@ -1722,7 +1677,7 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
             .bump()
             .ok_or_else(|| Failure::new("unexpected end of expression"))?;
         match token {
-            Token::Number(value) => Ok(value),
+            Token::Number(number) => Ok(Value::new(number)),
             Token::Name(name) => self.name(name),
             Token::LeftParenthesis => {
                 let value = self.expression(Precedence::LOWEST)?;
@@ -1730,19 +1685,29 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
                 Ok(value)
             }
             Token::Symbol(symbol) => {
-                let precedence = self
-                    .operators
-                    .prefix(&symbol)
-                    .ok_or_else(|| Failure::new(format!("unexpected symbol {symbol}")))?
-                    .precedence();
-                let value = self.expression(precedence)?;
-                let arguments = Arguments::from(vec![value]);
+                if self.prefix_applies() {
+                    if let Some(operator) = self.operators.prefix(&symbol) {
+                        let precedence = operator.precedence;
+                        let function = operator.function.clone();
+                        let value = self.expression(precedence)?;
+                        return function.call(&[value]);
+                    }
+                }
                 self.operators
-                    .prefix(&symbol)
-                    .ok_or_else(|| Failure::new(format!("unexpected symbol {symbol}")))?
-                    .apply(&arguments)
+                    .value(&symbol)
+                    .ok_or_else(|| Failure::new(format!("unexpected symbol {symbol}")))
             }
             other => Err(Failure::new(format!("unexpected {other}"))),
+        }
+    }
+
+    fn prefix_applies(&self) -> bool {
+        match self.tokens.peek() {
+            Some(token) => {
+                token.starts_value()
+                    || matches!(token, Token::Symbol(symbol) if self.operators.prefix(symbol).is_some())
+            }
+            None => false,
         }
     }
 
@@ -1750,16 +1715,19 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
         if matches!(self.tokens.peek(), Some(Token::LeftParenthesis)) {
             self.tokens.bump();
             let arguments = self.arguments()?;
-            self.session.calculate(&name, arguments)
-        } else {
-            self.session.lookup(&name)
+            let function = self.session.lookup(&name)?;
+            let function = function
+                .cast::<Function>()
+                .ok_or_else(|| Failure::new(format!("{name} is not a function")))?;
+            return function.call(&arguments);
         }
+        self.session.lookup(&name)
     }
 
-    fn arguments(&mut self) -> Result<Arguments, Failure> {
+    fn arguments(&mut self) -> Result<Vec<Value>, Failure> {
         if matches!(self.tokens.peek(), Some(Token::RightParenthesis)) {
             self.tokens.bump();
-            return Ok(Arguments::from(Vec::new()));
+            return Ok(Vec::new());
         }
         let mut values = Vec::new();
         loop {
@@ -1781,7 +1749,7 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
                 None => return Err(Failure::new("expected ',' or ')'")),
             }
         }
-        Ok(Arguments::from(values))
+        Ok(values)
     }
 
     fn expect_right_parenthesis(&mut self) -> Result<(), Failure> {
@@ -1794,56 +1762,59 @@ impl<'operators, 'session, 'data> Parser<'operators, 'session, 'data> {
 }
 
 pub struct Calculator {
-    operators: Operators,
-    calculations: Calculations,
     constants: Constants,
 }
 
 impl Calculator {
     pub fn new() -> Self {
         Self {
-            operators: Operators::new(),
-            calculations: Calculations::new(),
             constants: Constants::new(),
         }
     }
 
     pub fn evaluate(&self, source: &Source, angle: Angle) -> Results {
-        let mut session = Session::new(&self.constants, &self.calculations, angle);
+        let functions = Functions::new(angle);
+        let operators = Operators::new();
+        let mut session = Session::new(&self.constants, &functions);
         let mut evaluations = Vec::with_capacity(source.line_count());
         evaluations.extend(
             source
                 .lines()
-                .map(|line| self.evaluate_line(line, &mut session)),
+                .map(|line| self.evaluate_line(line, &mut session, &operators)),
         );
         Results::from(evaluations)
     }
 
-    fn evaluate_line(&self, line: Line<'_>, session: &mut Session<'_>) -> Evaluation {
+    fn evaluate_line(
+        &self,
+        line: Line<'_>,
+        session: &mut Session<'_>,
+        operators: &Operators,
+    ) -> Value {
         match line.statement() {
-            Ok(Statement::Empty) => Evaluation::Blank,
+            Ok(Statement::Empty) => Value::new(Blank::new()),
             Ok(Statement::Expression(expression)) => {
-                match self.evaluate_expression(&expression, session) {
+                match self.evaluate_expression(&expression, session, operators) {
                     Ok(value) => {
-                        session.remember(value);
-                        Evaluation::Value(value)
+                        session.remember(value.clone());
+                        value
                     }
-                    Err(failure) => Evaluation::Failure(failure),
+                    Err(failure) => Value::new(failure),
                 }
             }
             Ok(Statement::Assignment { name, expression }) => {
-                match self.evaluate_expression(&expression, session) {
-                    Ok(value) => match session.assign(name, value) {
+                match self.evaluate_expression(&expression, session, operators) {
+                    Ok(value) => match session.assign(name, value.clone()) {
                         Ok(()) => {
-                            session.remember(value);
-                            Evaluation::Value(value)
+                            session.remember(value.clone());
+                            value
                         }
-                        Err(failure) => Evaluation::Failure(failure),
+                        Err(failure) => Value::new(failure),
                     },
-                    Err(failure) => Evaluation::Failure(failure),
+                    Err(failure) => Value::new(failure),
                 }
             }
-            Err(failure) => Evaluation::Failure(failure),
+            Err(failure) => Value::new(failure),
         }
     }
 
@@ -1851,11 +1822,15 @@ impl Calculator {
         &self,
         expression: &Expression,
         session: &mut Session<'_>,
+        operators: &Operators,
     ) -> Result<Value, Failure> {
         let mut lexer = Lexer::new(expression);
         let tokens = lexer.tokens()?;
-        let value = Parser::new(tokens, &self.operators, session).value()?;
-        if value.is_nan() {
+        let value = Parser::new(tokens, operators, session).value()?;
+        if value
+            .cast::<Number>()
+            .is_some_and(|number| number.value().is_nan())
+        {
             return Err(Failure::new("not a real number"));
         }
         Ok(value)

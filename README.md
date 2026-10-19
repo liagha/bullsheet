@@ -42,6 +42,7 @@ On launch the app checks the latest GitHub release in the background. If a newer
 - Comments with `#`.
 - Percent, factorial, implicit multiplication, and `**` as power.
 - Functions including `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sqrt`, `cbrt`, `abs`, `ln`, `log`, `log2`, `log10`, `exp`, `floor`, `ceil`, `round`, `trunc`, `sign`, `min`, `max`, `hypot`, and `atan2`.
+- Every operation is a value: operators have names (`add`, `subtract`, `multiply`, `divide`, `mod`, `pow`, `negate`, `factorial`, `percentage`) and symbols work as values too, so `plus = +` gives you `plus(3, 4)`, and `sine = sin` gives you `sine(1)`.
 - Constants `pi`, `tau`, `e`, `phi`, and `inf`.
 - Persian and Arabic-Indic digits and common math symbols are normalized.
 

@@ -155,8 +155,9 @@ impl<'a> Line<'a> {
         if code.is_empty() {
             return Ok(Statement::Empty);
         }
+        let offset = self.text.chars().count() - self.text.trim_start().chars().count();
         if let Some((left, right)) = code.split_once('=') {
-            let expression = Expression::new(right);
+            let expression = Expression::new(right, offset + left.chars().count() + 1);
             if expression.is_empty() {
                 return Err(Failure::new("missing expression"));
             }
@@ -170,7 +171,7 @@ impl<'a> Line<'a> {
             let name = Identifier::try_from(left)?;
             return Ok(Statement::Assignment { name, expression });
         }
-        let expression = Expression::new(code);
+        let expression = Expression::new(code, offset);
         if expression.is_empty() {
             return Ok(Statement::Empty);
         }
@@ -206,50 +207,103 @@ impl<'a> Line<'a> {
 }
 
 #[derive(Debug)]
-struct Expression(String);
+struct Expression {
+    text: String,
+    offset: usize,
+    sources: Vec<usize>,
+}
 
 impl Expression {
-    fn new(text: &str) -> Self {
+    fn new(text: &str, offset: usize) -> Self {
         let mut normalized = String::with_capacity(text.len());
-        for character in text.chars() {
+        let mut sources = Vec::with_capacity(text.len());
+        for (index, character) in text.chars().enumerate() {
             match character {
-                '\u{06F0}'..='\u{06F9}' => normalized.push(
-                    char::from_u32('0' as u32 + (character as u32 - '\u{06F0}' as u32))
-                        .unwrap_or('0'),
-                ),
-                '\u{0660}'..='\u{0669}' => normalized.push(
-                    char::from_u32('0' as u32 + (character as u32 - '\u{0660}' as u32))
-                        .unwrap_or('0'),
-                ),
-                '×' | '·' => normalized.push('*'),
-                '÷' => normalized.push('/'),
-                '−' | '–' | '—' => normalized.push('-'),
-                '٫' => normalized.push('.'),
-                '٪' => normalized.push('%'),
-                'π' => normalized.push_str("pi"),
-                'τ' => normalized.push_str("tau"),
-                '∞' => normalized.push_str("inf"),
+                '\u{06F0}'..='\u{06F9}' => {
+                    let digit = char::from_u32('0' as u32 + (character as u32 - '\u{06F0}' as u32))
+                        .unwrap_or('0');
+                    normalized.push(digit);
+                    sources.push(index);
+                }
+                '\u{0660}'..='\u{0669}' => {
+                    let digit = char::from_u32('0' as u32 + (character as u32 - '\u{0660}' as u32))
+                        .unwrap_or('0');
+                    normalized.push(digit);
+                    sources.push(index);
+                }
+                '×' | '·' => {
+                    normalized.push('*');
+                    sources.push(index);
+                }
+                '÷' => {
+                    normalized.push('/');
+                    sources.push(index);
+                }
+                '−' | '–' | '—' => {
+                    normalized.push('-');
+                    sources.push(index);
+                }
+                '٫' => {
+                    normalized.push('.');
+                    sources.push(index);
+                }
+                '٪' => {
+                    normalized.push('%');
+                    sources.push(index);
+                }
+                'π' => Self::expanded(&mut normalized, &mut sources, "pi", index),
+                'τ' => Self::expanded(&mut normalized, &mut sources, "tau", index),
+                '∞' => Self::expanded(&mut normalized, &mut sources, "inf", index),
                 '\u{200E}' | '\u{200F}' => {}
-                _ => normalized.push(character),
+                _ => {
+                    normalized.push(character);
+                    sources.push(index);
+                }
             }
         }
-        Self(normalized.trim().to_string())
+        let trimmed = normalized.trim();
+        let leading = normalized.chars().count() - normalized.trim_start().chars().count();
+        let trailing = normalized.chars().count() - normalized.trim_end().chars().count();
+        sources.drain(..leading);
+        sources.truncate(sources.len().saturating_sub(trailing));
+        Self {
+            text: trimmed.to_string(),
+            offset,
+            sources,
+        }
+    }
+
+    fn expanded(normalized: &mut String, sources: &mut Vec<usize>, text: &str, index: usize) {
+        for _ in text.chars() {
+            sources.push(index);
+        }
+        normalized.push_str(text);
+    }
+
+    fn span(&self, span: std::ops::Range<usize>) -> std::ops::Range<usize> {
+        let start = self.sources.get(span.start).copied().unwrap_or(0);
+        let end = span
+            .end
+            .checked_sub(1)
+            .and_then(|last| self.sources.get(last))
+            .map_or(start, |last| last + 1);
+        (self.offset + start)..(self.offset + end)
     }
 
     fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.text.is_empty()
     }
 }
 
 impl std::fmt::Display for Expression {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.text)
     }
 }
 
 impl AsRef<str> for Expression {
     fn as_ref(&self) -> &str {
-        &self.0
+        &self.text
     }
 }
 
@@ -268,34 +322,76 @@ enum Statement {
     },
 }
 
-pub struct Results(Vec<Value>);
+pub struct Part {
+    span: std::ops::Range<usize>,
+    value: Value,
+}
 
-impl std::ops::Deref for Results {
-    type Target = [Value];
+impl Part {
+    pub fn span(&self) -> std::ops::Range<usize> {
+        self.span.clone()
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+}
+
+pub struct Reading {
+    value: Value,
+    parts: Vec<Part>,
+}
+
+impl Reading {
+    fn new(value: Value, parts: Vec<Part>) -> Self {
+        Self { value, parts }
+    }
+
+    fn without_parts(value: Value) -> Self {
+        Self::new(value, Vec::new())
+    }
+
+    fn replace(&mut self, value: Value) {
+        self.value = value;
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    pub fn parts(&self) -> &[Part] {
+        &self.parts
+    }
+}
+
+pub struct Readings(Vec<Reading>);
+
+impl std::ops::Deref for Readings {
+    type Target = [Reading];
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl From<Vec<Value>> for Results {
-    fn from(evaluations: Vec<Value>) -> Self {
-        Self(evaluations)
+impl From<Vec<Reading>> for Readings {
+    fn from(readings: Vec<Reading>) -> Self {
+        Self(readings)
     }
 }
 
-impl IntoIterator for Results {
-    type Item = Value;
-    type IntoIter = std::vec::IntoIter<Value>;
+impl IntoIterator for Readings {
+    type Item = Reading;
+    type IntoIter = std::vec::IntoIter<Reading>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<'a> IntoIterator for &'a Results {
-    type Item = &'a Value;
-    type IntoIter = std::slice::Iter<'a, Value>;
+impl<'a> IntoIterator for &'a Readings {
+    type Item = &'a Reading;
+    type IntoIter = std::slice::Iter<'a, Reading>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -372,21 +468,27 @@ impl std::fmt::Display for Token {
 
 #[derive(Debug)]
 struct Tokens {
-    items: Vec<Token>,
+    items: Vec<(Token, std::ops::Range<usize>)>,
     position: usize,
 }
 
 impl Tokens {
-    fn new(items: Vec<Token>) -> Self {
+    fn new(items: Vec<(Token, std::ops::Range<usize>)>) -> Self {
         Self { items, position: 0 }
     }
 
     fn peek(&self) -> Option<&Token> {
-        self.items.get(self.position)
+        self.items.get(self.position).map(|(token, _)| token)
     }
 
     fn peek_after(&self, offset: usize) -> Option<&Token> {
-        self.items.get(self.position + offset)
+        self.items
+            .get(self.position + offset)
+            .map(|(token, _)| token)
+    }
+
+    fn span(&self, index: usize) -> Option<std::ops::Range<usize>> {
+        self.items.get(index).map(|(_, span)| span.clone())
     }
 
     fn bump(&mut self) -> Option<Token> {
@@ -422,7 +524,9 @@ impl Lexer {
                 self.bump();
                 continue;
             }
-            items.push(self.token()?);
+            let start = self.position;
+            let token = self.token()?;
+            items.push((token, start..self.position));
         }
         Ok(Tokens::new(items))
     }
@@ -1739,6 +1843,8 @@ struct Parser<'a> {
     tokens: Tokens,
     operators: &'a Operators,
     session: &'a Session,
+    expression: Option<&'a Expression>,
+    parts: Option<&'a mut Vec<Part>>,
 }
 
 impl<'a> Parser<'a> {
@@ -1747,6 +1853,31 @@ impl<'a> Parser<'a> {
             tokens,
             operators,
             session,
+            expression: None,
+            parts: None,
+        }
+    }
+
+    fn reading(mut self, expression: &'a Expression, parts: &'a mut Vec<Part>) -> Self {
+        self.expression = Some(expression);
+        self.parts = Some(parts);
+        self
+    }
+
+    fn record(&mut self, index: usize, value: &Value) {
+        let expression = match self.expression {
+            Some(expression) => expression,
+            None => return,
+        };
+        let parts = match self.parts.as_mut() {
+            Some(parts) => parts,
+            None => return,
+        };
+        if let Some(span) = self.tokens.span(index) {
+            parts.push(Part {
+                span: expression.span(span),
+                value: value.clone(),
+            });
         }
     }
 
@@ -1769,6 +1900,7 @@ impl<'a> Parser<'a> {
                 Some(token) => token.clone(),
                 None => break,
             };
+            let index = self.tokens.position;
             if let Token::Symbol(symbol) = &token {
                 let percentage_remainder = *symbol == Symbol::PERCENT
                     && self.tokens.peek_after(1).is_some_and(Token::starts_value);
@@ -1778,6 +1910,7 @@ impl<'a> Parser<'a> {
                         let function = operator.function.clone();
                         if precedence >= minimum {
                             self.tokens.bump();
+                            self.record(index, &Value::new(function.clone()));
                             left = function.call(&[left])?;
                             continue;
                         }
@@ -1791,6 +1924,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     self.tokens.bump();
+                    self.record(index, &Value::new(function.clone()));
                     let next_minimum = match associativity {
                         Associativity::Right => precedence,
                         _ => precedence.next(),
@@ -1818,13 +1952,18 @@ impl<'a> Parser<'a> {
     }
 
     fn prefix(&mut self) -> Result<Value, Failure> {
+        let index = self.tokens.position;
         let token = self
             .tokens
             .bump()
             .ok_or_else(|| Failure::new("unexpected end of expression"))?;
         match token {
-            Token::Number(number) => Ok(Value::new(number)),
-            Token::Name(name) => self.name(name),
+            Token::Number(number) => {
+                let value = Value::new(number);
+                self.record(index, &value);
+                Ok(value)
+            }
+            Token::Name(name) => self.name(index, name),
             Token::LeftParenthesis => {
                 let value = self.expression(Precedence::LOWEST)?;
                 self.expect_right_parenthesis()?;
@@ -1835,13 +1974,17 @@ impl<'a> Parser<'a> {
                     if let Some(operator) = self.operators.prefix(&symbol) {
                         let precedence = operator.precedence;
                         let function = operator.function.clone();
+                        self.record(index, &Value::new(function.clone()));
                         let value = self.expression(precedence)?;
                         return function.call(&[value]);
                     }
                 }
-                self.operators
+                let value = self
+                    .operators
                     .value(&symbol)
-                    .ok_or_else(|| Failure::new(format!("unexpected symbol {symbol}")))
+                    .ok_or_else(|| Failure::new(format!("unexpected symbol {symbol}")))?;
+                self.record(index, &value);
+                Ok(value)
             }
             other => Err(Failure::new(format!("unexpected {other}"))),
         }
@@ -1857,17 +2000,33 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn name(&mut self, name: Identifier) -> Result<Value, Failure> {
+    fn name(&mut self, index: usize, name: Identifier) -> Result<Value, Failure> {
         if matches!(self.tokens.peek(), Some(Token::LeftParenthesis)) {
             self.tokens.bump();
-            let arguments = self.arguments()?;
-            let function = self.session.lookup(&name)?;
-            let function = function
+            let value = match self.session.lookup(&name) {
+                Ok(value) => value,
+                Err(failure) => {
+                    self.record(index, &Value::new(Failure::new(failure.to_string())));
+                    return Err(failure);
+                }
+            };
+            self.record(index, &value);
+            let function = value
                 .cast::<Function>()
                 .ok_or_else(|| Failure::new(format!("{name} is not a function")))?;
+            let arguments = self.arguments()?;
             return function.call(&arguments);
         }
-        self.session.lookup(&name)
+        match self.session.lookup(&name) {
+            Ok(value) => {
+                self.record(index, &value);
+                Ok(value)
+            }
+            Err(failure) => {
+                self.record(index, &Value::new(Failure::new(failure.to_string())));
+                Err(failure)
+            }
+        }
     }
 
     fn arguments(&mut self) -> Result<Vec<Value>, Failure> {
@@ -1914,40 +2073,32 @@ impl Calculator {
         Self
     }
 
-    pub fn evaluate(&self, source: &Source, angle: Angle) -> Results {
+    pub fn evaluate(&self, source: &Source, angle: Angle) -> Readings {
         let session = Session::new(std::rc::Rc::new(Language::new(angle)));
-        let mut evaluations = Vec::with_capacity(source.line_count());
-        evaluations.extend(
-            source
-                .lines()
-                .map(|line| self.evaluate_line(line, &session)),
-        );
-        Results::from(evaluations)
+        let mut readings = Vec::with_capacity(source.line_count());
+        readings.extend(source.lines().map(|line| self.evaluate_line(line, &session)));
+        Readings::from(readings)
     }
 
-    fn evaluate_line(&self, line: Line<'_>, session: &Session) -> Value {
+    fn evaluate_line(&self, line: Line<'_>, session: &Session) -> Reading {
         match line.statement() {
-            Ok(Statement::Empty) => Value::new(Blank::new()),
+            Ok(Statement::Empty) => Reading::without_parts(Value::new(Blank::new())),
             Ok(Statement::Expression(expression)) => {
-                match self.evaluate_expression(&expression, session) {
-                    Ok(value) => {
-                        session.remember(value.clone());
-                        value
-                    }
-                    Err(failure) => Value::new(failure),
+                let reading = self.evaluate_expression(&expression, session);
+                if reading.value().cast::<Failure>().is_none() {
+                    session.remember(reading.value().clone());
                 }
+                reading
             }
             Ok(Statement::Assignment { name, expression }) => {
-                match self.evaluate_expression(&expression, session) {
-                    Ok(value) => match session.assign(name, value.clone()) {
-                        Ok(()) => {
-                            session.remember(value.clone());
-                            value
-                        }
-                        Err(failure) => Value::new(failure),
-                    },
-                    Err(failure) => Value::new(failure),
+                let mut reading = self.evaluate_expression(&expression, session);
+                if reading.value().cast::<Failure>().is_none() {
+                    match session.assign(name, reading.value().clone()) {
+                        Ok(()) => session.remember(reading.value().clone()),
+                        Err(failure) => reading.replace(Value::new(failure)),
+                    }
                 }
+                reading
             }
             Ok(Statement::Definition {
                 name,
@@ -1965,29 +2116,35 @@ impl Calculator {
                 match session.assign(name, function.clone()) {
                     Ok(()) => {
                         session.remember(function.clone());
-                        function
+                        Reading::without_parts(function)
                     }
-                    Err(failure) => Value::new(failure),
+                    Err(failure) => Reading::without_parts(Value::new(failure)),
                 }
             }
-            Err(failure) => Value::new(failure),
+            Err(failure) => Reading::without_parts(Value::new(failure)),
         }
     }
 
-    fn evaluate_expression(
-        &self,
-        expression: &Expression,
-        session: &Session,
-    ) -> Result<Value, Failure> {
+    fn evaluate_expression(&self, expression: &Expression, session: &Session) -> Reading {
+        let mut parts = Vec::new();
         let mut lexer = Lexer::new(expression);
-        let tokens = lexer.tokens()?;
-        let value = Parser::new(tokens, &session.language.operators, session).value()?;
-        if value
-            .cast::<Number>()
-            .is_some_and(|number| number.value().is_nan())
-        {
-            return Err(Failure::new("not a real number"));
-        }
-        Ok(value)
+        let result = match lexer.tokens() {
+            Ok(tokens) => Parser::new(tokens, &session.language.operators, session)
+                .reading(expression, &mut parts)
+                .value(),
+            Err(failure) => Err(failure),
+        };
+        let value = match result {
+            Ok(value)
+                if value
+                    .cast::<Number>()
+                    .is_some_and(|number| number.value().is_nan()) =>
+            {
+                Value::new(Failure::new("not a real number"))
+            }
+            Ok(value) => value,
+            Err(failure) => Value::new(failure),
+        };
+        Reading::new(value, parts)
     }
 }

@@ -4,7 +4,7 @@ const SHORTCUT_KEY: &str = "shortcut";
 pub(crate) struct Application {
     source: evaluator::Source,
     calculator: evaluator::Calculator,
-    results: evaluator::Results,
+    readings: evaluator::Readings,
     angle: evaluator::Angle,
     renderers: crate::render::Renderers,
     decorations: crate::decorations::Decorations,
@@ -124,12 +124,12 @@ impl Application {
         let updater = Updater::new(&context.egui_ctx);
         let calculator = Calculator::new();
         let source = Source::new(String::new());
-        let results = calculator.evaluate(&source, angle);
+        let readings = calculator.evaluate(&source, angle);
         let visible = !hidden || shortcut.is_none();
         Self {
             source,
             calculator,
-            results,
+            readings,
             angle,
             renderers: Renderers::new(),
             decorations: Decorations::new(),
@@ -471,7 +471,7 @@ impl eframe::App for Application {
                             );
                             if angle.clicked() {
                                 self.angle = self.angle.toggled();
-                                self.results = self.calculator.evaluate(&self.source, self.angle);
+                                self.readings = self.calculator.evaluate(&self.source, self.angle);
                             }
                             let settings = ui.add(
                                 egui::Button::new(
@@ -516,137 +516,253 @@ impl eframe::App for Application {
                 if self.settings_open {
                     self.settings(ui);
                 } else {
+                    let calculator = &self.calculator;
+                    let source = &mut self.source;
+                    let readings = &mut self.readings;
+                    let renderers = &self.renderers;
+                    let angle = self.angle;
+                    let focus_requested = &mut self.focus_requested;
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let font = FontId::monospace(16.0);
-                        let viewport = ui.clip_rect();
-                        let spacing = 14.0;
-                        let mut gutter_width: f32 = 170.0;
-                        for value in &self.results {
-                            let shown = match self.renderers.render(value) {
-                                Some(shown) => shown,
-                                None => continue,
-                            };
-                            let width = ui
-                                .painter()
-                                .layout_no_wrap(
-                                    shown.text.to_string(),
-                                    font.clone(),
-                                    Color32::WHITE,
-                                )
-                                .size()
-                                .x;
-                            gutter_width = gutter_width.max(width + 16.0);
-                        }
-                        let gutter_width = gutter_width.min(300.0);
-                        let gutter_right = viewport.right() - 10.0;
-                        let editor_width =
-                            (gutter_right - gutter_width - spacing - viewport.left()).max(100.0);
-                        let mut layouter = |ui: &egui::Ui,
-                                            text: &dyn egui::TextBuffer,
-                                            _wrap_width: f32| {
-                            let job = egui::text::LayoutJob::simple(
-                                text.as_str().to_owned(),
-                                FontId::monospace(16.0),
-                                Color32::from_rgb(224, 227, 233),
-                                f32::INFINITY,
-                            );
-                            ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
-                        };
-                        let mut output = egui::TextEdit::multiline(self.source.as_mut())
-                            .id(ui.scope_id().with("source"))
-                            .font(FontId::monospace(16.0))
-                            .text_color(Color32::from_rgb(224, 227, 233))
-                            .desired_width(editor_width)
-                            .desired_rows(10)
-                            .frame(egui::Frame::NONE)
-                            .margin(egui::Margin::ZERO)
-                            .hint_text("Type an expression")
-                            .layouter(&mut layouter)
-                            .show(ui);
-                        if output.response.changed() {
-                            self.results = self.calculator.evaluate(&self.source, self.angle);
-                        }
-                        if self.focus_requested {
-                            output.response.request_focus();
-                            let count = self.source.as_ref().chars().count();
-                            output.state.cursor.set_char_range(Some(
-                                egui::text::CCursorRange::two(
-                                    egui::text::CCursor::new(0),
-                                    egui::text::CCursor::new(count),
-                                ),
-                            ));
-                            output.state.store(ui.ctx(), output.response.id);
-                            self.focus_requested = false;
-                        }
-                        let editor_rect = output.response.rect;
-                        let gutter_left = editor_rect.right() + spacing;
-                        let gutter_rect = Rect::from_min_max(
-                            egui::pos2(gutter_left, viewport.top()),
-                            egui::pos2(gutter_right, viewport.bottom()),
-                        );
-                        let painter = ui.painter().with_clip_rect(gutter_rect);
-                        for (index, placed) in output.galley.rows.iter().enumerate() {
-                            let value = match self.results.get(index) {
-                                Some(value) => value,
-                                None => continue,
-                            };
-                            let shown = match self.renderers.render(value) {
-                                Some(shown) => shown,
-                                None => continue,
-                            };
-                            let top = output.galley_pos.y + placed.pos.y;
-                            let bottom = top + placed.row.size.y;
-                            let rect = Rect::from_min_max(
-                                egui::pos2(gutter_left, top),
-                                egui::pos2(gutter_right, bottom),
-                            );
-                            if !rect.intersects(viewport) {
-                                continue;
-                            }
-                            if let Some(plain) = &shown.plain {
-                                let response = ui
-                                    .interact(
-                                        rect,
-                                        ui.scope_id().with(("result", index)),
-                                        Sense::click(),
+                        .show(ui, |ui| {
+                            let font = FontId::monospace(16.0);
+                            let viewport = ui.clip_rect();
+                            let spacing = 14.0;
+                            let base = Color32::from_rgb(224, 227, 233);
+                            let mut gutter_width: f32 = 170.0;
+                            for reading in readings.iter() {
+                                let shown = match renderers.render(reading.value()) {
+                                    Some(shown) => shown,
+                                    None => continue,
+                                };
+                                let width = ui
+                                    .painter()
+                                    .layout_no_wrap(
+                                        shown.text.to_string(),
+                                        font.clone(),
+                                        Color32::WHITE,
                                     )
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                if response.hovered() {
-                                    painter.rect_filled(
-                                        rect,
-                                        4,
-                                        Color32::from_rgb(48, 48, 48),
-                                    );
-                                }
-                                if response.clicked() {
-                                    context.copy_text(plain.to_string());
-                                }
+                                    .size()
+                                    .x;
+                                gutter_width = gutter_width.max(width + 16.0);
                             }
-                            let text = shown.text.to_string();
-                            let text_width = painter
-                                .layout_no_wrap(text.clone(), font.clone(), shown.color)
-                                .size()
-                                .x;
-                            let available_width = gutter_width - 8.0;
-                            let text_font = if text_width > available_width {
-                                FontId::monospace(
-                                    (font.size * available_width / text_width).max(9.0),
-                                )
-                            } else {
-                                font.clone()
+                            let gutter_width = gutter_width.min(300.0);
+                            let gutter_right = viewport.right() - 10.0;
+                            let editor_width =
+                                (gutter_right - gutter_width - spacing - viewport.left()).max(100.0);
+                            let mut layouter = |ui: &egui::Ui,
+                                                text: &dyn egui::TextBuffer,
+                                                _wrap_width: f32| {
+                                let text = text.as_str();
+                                let mut job = egui::text::LayoutJob::default();
+                                job.wrap.max_width = f32::INFINITY;
+                                let lines: Vec<&str> = text.split('\n').collect();
+                                for (index, line) in lines.iter().enumerate() {
+                                    let characters = line.chars().count();
+                                    let boundaries: Vec<usize> = line
+                                        .char_indices()
+                                        .map(|(byte, _)| byte)
+                                        .chain(std::iter::once(line.len()))
+                                        .collect();
+                                    let mut position = 0;
+                                    if let Some(reading) = readings.get(index) {
+                                        for part in reading.parts() {
+                                            let span = part.span();
+                                            let start = span.start.min(characters);
+                                            let end = span.end.min(characters).max(start);
+                                            if start < position || start >= end {
+                                                continue;
+                                            }
+                                            if start > position {
+                                                job.append(
+                                                    &line[boundaries[position]..boundaries[start]],
+                                                    0.0,
+                                                    egui::TextFormat {
+                                                        font_id: font.clone(),
+                                                        color: base,
+                                                        ..Default::default()
+                                                    },
+                                                );
+                                            }
+                                            let color = renderers
+                                                .render(part.value())
+                                                .map_or(base, |shown| shown.color);
+                                            job.append(
+                                                &line[boundaries[start]..boundaries[end]],
+                                                0.0,
+                                                egui::TextFormat {
+                                                    font_id: font.clone(),
+                                                    color,
+                                                    ..Default::default()
+                                                },
+                                            );
+                                            position = end;
+                                        }
+                                    }
+                                    if position < characters {
+                                        job.append(
+                                            &line[boundaries[position]..],
+                                            0.0,
+                                            egui::TextFormat {
+                                                font_id: font.clone(),
+                                                color: base,
+                                                ..Default::default()
+                                            },
+                                        );
+                                    }
+                                    if index + 1 < lines.len() {
+                                        job.append(
+                                            "\n",
+                                            0.0,
+                                            egui::TextFormat {
+                                                font_id: font.clone(),
+                                                color: base,
+                                                ..Default::default()
+                                            },
+                                        );
+                                    }
+                                }
+                                ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
                             };
-                            painter.text(
-                                egui::pos2(gutter_right - 4.0, top + placed.row.size.y / 2.0),
-                                Align2::RIGHT_CENTER,
-                                text,
-                                text_font,
-                                shown.color,
+                            let mut output = egui::TextEdit::multiline(source.as_mut())
+                                .id(ui.scope_id().with("source"))
+                                .font(FontId::monospace(16.0))
+                                .text_color(base)
+                                .desired_width(editor_width)
+                                .desired_rows(10)
+                                .frame(egui::Frame::NONE)
+                                .margin(egui::Margin::ZERO)
+                                .hint_text("Type an expression")
+                                .layouter(&mut layouter)
+                                .show(ui);
+                            if output.response.changed() {
+                                *readings = calculator.evaluate(source, angle);
+                            }
+                            if *focus_requested {
+                                output.response.request_focus();
+                                let count = source.as_ref().chars().count();
+                                output.state.cursor.set_char_range(Some(
+                                    egui::text::CCursorRange::two(
+                                        egui::text::CCursor::new(0),
+                                        egui::text::CCursor::new(count),
+                                    ),
+                                ));
+                                output.state.store(ui.ctx(), output.response.id);
+                                *focus_requested = false;
+                            }
+                            let editor_rect = output.response.rect;
+                            let gutter_left = editor_rect.right() + spacing;
+                            let gutter_rect = Rect::from_min_max(
+                                egui::pos2(gutter_left, viewport.top()),
+                                egui::pos2(gutter_right, viewport.bottom()),
                             );
-                        }
-                    });
+                            let painter = ui.painter().with_clip_rect(gutter_rect);
+                            for (index, placed) in output.galley.rows.iter().enumerate() {
+                                let reading = match readings.get(index) {
+                                    Some(reading) => reading,
+                                    None => continue,
+                                };
+                                let shown = match renderers.render(reading.value()) {
+                                    Some(shown) => shown,
+                                    None => continue,
+                                };
+                                let top = output.galley_pos.y + placed.pos.y;
+                                let bottom = top + placed.row.size.y;
+                                let rect = Rect::from_min_max(
+                                    egui::pos2(gutter_left, top),
+                                    egui::pos2(gutter_right, bottom),
+                                );
+                                if !rect.intersects(viewport) {
+                                    continue;
+                                }
+                                if let Some(plain) = &shown.plain {
+                                    let response = ui
+                                        .interact(
+                                            rect,
+                                            ui.scope_id().with(("result", index)),
+                                            Sense::click(),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if response.hovered() {
+                                        painter.rect_filled(
+                                            rect,
+                                            4,
+                                            Color32::from_rgb(48, 48, 48),
+                                        );
+                                    }
+                                    if response.clicked() {
+                                        context.copy_text(plain.to_string());
+                                    }
+                                }
+                                let text = shown.text.to_string();
+                                let text_width = painter
+                                    .layout_no_wrap(text.clone(), font.clone(), shown.color)
+                                    .size()
+                                    .x;
+                                let available_width = gutter_width - 8.0;
+                                let text_font = if text_width > available_width {
+                                    FontId::monospace(
+                                        (font.size * available_width / text_width).max(9.0),
+                                    )
+                                } else {
+                                    font.clone()
+                                };
+                                painter.text(
+                                    egui::pos2(gutter_right - 4.0, top + placed.row.size.y / 2.0),
+                                    Align2::RIGHT_CENTER,
+                                    text,
+                                    text_font,
+                                    shown.color,
+                                );
+                            }
+                            let hovered = context.pointer_hover_pos().and_then(|position| {
+                                if !output.response.rect.contains(position) {
+                                    return None;
+                                }
+                                let cursor =
+                                    output.galley.cursor_from_pos(position - output.galley_pos);
+                                let mut index = cursor.index.0;
+                                for (line_index, line) in source.as_ref().split('\n').enumerate() {
+                                    let characters = line.chars().count();
+                                    if index <= characters {
+                                        let reading = readings.get(line_index)?;
+                                        return reading
+                                            .parts()
+                                            .iter()
+                                            .find(|part| part.span().contains(&index))
+                                            .map(|part| {
+                                                let span = part.span();
+                                                let text: String = line
+                                                    .chars()
+                                                    .skip(span.start)
+                                                    .take(span.end - span.start)
+                                                    .collect();
+                                                (part.value(), text)
+                                            });
+                                    }
+                                    index -= characters + 1;
+                                }
+                                None
+                            });
+                            if let Some((value, text)) = hovered {
+                                let tip = match renderers.render(value) {
+                                    Some(shown) => {
+                                        format!("{} {} — ctrl-click copies", shown.kind, shown.text)
+                                    }
+                                    None => text.clone(),
+                                };
+                                if context.input(|input| input.modifiers.command)
+                                    && output.response.clicked()
+                                {
+                                    context.copy_text(text);
+                                }
+                                (*output.response)
+                                    .clone()
+                                    .on_hover_text_at_pointer(tip);
+                            }
+                        });
                 }
             });
+
     }
 }

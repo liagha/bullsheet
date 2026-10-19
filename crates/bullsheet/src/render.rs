@@ -95,6 +95,7 @@ pub(crate) struct Shown {
     pub(crate) text: Presentation,
     pub(crate) color: eframe::egui::Color32,
     pub(crate) plain: Option<Presentation>,
+    pub(crate) kind: &'static str,
 }
 
 pub(crate) trait Render {
@@ -107,6 +108,7 @@ impl Render for element::Number {
             text: Presentation::number(self.value()),
             color: eframe::egui::Color32::from_rgb(126, 231, 135),
             plain: Some(Presentation::plain(self.value())),
+            kind: "number",
         })
     }
 }
@@ -118,6 +120,7 @@ impl Render for element::Text {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(224, 227, 233),
             plain: Some(text),
+            kind: "text",
         })
     }
 }
@@ -129,6 +132,7 @@ impl Render for element::Truth {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(126, 231, 135),
             plain: Some(text),
+            kind: "truth",
         })
     }
 }
@@ -140,6 +144,7 @@ impl Render for element::Function {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(198, 160, 246),
             plain: Some(text),
+            kind: "function",
         })
     }
 }
@@ -156,6 +161,7 @@ impl Render for element::Failure {
             text: Presentation::new(self.to_string()),
             color: eframe::egui::Color32::from_rgb(255, 123, 114),
             plain: None,
+            kind: "failure",
         })
     }
 }

@@ -643,39 +643,59 @@ impl<'a> std::ops::Deref for Arguments<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Arity {
-    One,
-    Two,
-    OneOrTwo,
-    Many,
-    Exact(usize),
+#[derive(Clone, Copy, Debug)]
+struct Arity {
+    minimum: usize,
+    maximum: Option<usize>,
 }
 
 impl Arity {
-    fn accepts(self, values: &[Value]) -> bool {
-        match self {
-            Self::One => values.len() == 1,
-            Self::Two => values.len() == 2,
-            Self::OneOrTwo => values.len() == 1 || values.len() == 2,
-            Self::Many => !values.is_empty(),
-            Self::Exact(count) => values.len() == count,
+    fn exactly(count: usize) -> Self {
+        Self {
+            minimum: count,
+            maximum: Some(count),
         }
+    }
+
+    fn between(minimum: usize, maximum: usize) -> Self {
+        Self {
+            minimum,
+            maximum: Some(maximum),
+        }
+    }
+
+    fn at_least(minimum: usize) -> Self {
+        Self {
+            minimum,
+            maximum: None,
+        }
+    }
+
+    fn accepts(self, values: &[Value]) -> bool {
+        values.len() >= self.minimum
+            && self
+                .maximum
+                .is_none_or(|maximum| values.len() <= maximum)
+    }
+
+    fn counted(count: usize) -> String {
+        format!("{count} argument{}", if count == 1 { "" } else { "s" })
     }
 }
 
 impl std::fmt::Display for Arity {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::One => formatter.write_str("one argument"),
-            Self::Two => formatter.write_str("two arguments"),
-            Self::OneOrTwo => formatter.write_str("one or two arguments"),
-            Self::Many => formatter.write_str("at least one argument"),
-            Self::Exact(count) => write!(
+        match self.maximum {
+            Some(maximum) if maximum == self.minimum => {
+                write!(formatter, "{}", Self::counted(self.minimum))
+            }
+            Some(maximum) => write!(
                 formatter,
-                "{count} argument{}",
-                if *count == 1 { "" } else { "s" }
+                "{} or {}",
+                self.minimum,
+                Self::counted(maximum)
             ),
+            None => write!(formatter, "at least {}", Self::counted(self.minimum)),
         }
     }
 }
@@ -705,7 +725,7 @@ impl Callable for Positive {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(arguments.number(0)?))
     }
 }
@@ -719,7 +739,7 @@ impl Callable for Negation {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(-arguments.number(0)?.value())))
     }
 }
@@ -733,7 +753,7 @@ impl Callable for Addition {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value() + right.value())))
     }
@@ -748,7 +768,7 @@ impl Callable for Subtraction {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value() - right.value())))
     }
@@ -763,7 +783,7 @@ impl Callable for Multiplication {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value() * right.value())))
     }
@@ -778,7 +798,7 @@ impl Callable for Division {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         if right.value() == 0.0 {
             return Err(Failure::new("division by zero"));
@@ -796,7 +816,7 @@ impl Callable for Modulo {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         if right.value() == 0.0 {
             return Err(Failure::new("remainder by zero"));
@@ -814,7 +834,7 @@ impl Callable for Power {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value().powf(right.value()))))
     }
@@ -829,7 +849,7 @@ impl Callable for Factorial {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value < 0.0 || value.fract() != 0.0 {
             return Err(Failure::new("factorial requires a non-negative integer"));
@@ -854,7 +874,7 @@ impl Callable for Percentage {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value() / 100.0)))
     }
 }
@@ -870,7 +890,7 @@ impl Callable for Sine {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let radians = self.angle.to_radians(arguments.number(0)?);
         Ok(Value::new(Number::new(radians.value().sin())))
     }
@@ -887,7 +907,7 @@ impl Callable for Cosine {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let radians = self.angle.to_radians(arguments.number(0)?);
         Ok(Value::new(Number::new(radians.value().cos())))
     }
@@ -904,7 +924,7 @@ impl Callable for Tangent {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let radians = self.angle.to_radians(arguments.number(0)?);
         Ok(Value::new(Number::new(radians.value().tan())))
     }
@@ -921,7 +941,7 @@ impl Callable for Arcsine {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if !(-1.0..=1.0).contains(&value) {
             return Err(Failure::new(
@@ -943,7 +963,7 @@ impl Callable for Arccosine {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if !(-1.0..=1.0).contains(&value) {
             return Err(Failure::new(
@@ -965,7 +985,7 @@ impl Callable for Arctangent {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         Ok(Value::new(self.angle.from_radians(Number::new(value.atan()))))
     }
@@ -982,7 +1002,7 @@ impl Callable for Arctangent2 {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         let radians = Number::new(left.value().atan2(right.value()));
         Ok(Value::new(self.angle.from_radians(radians)))
@@ -998,7 +1018,7 @@ impl Callable for HyperbolicSine {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().sinh())))
     }
 }
@@ -1012,7 +1032,7 @@ impl Callable for HyperbolicCosine {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().cosh())))
     }
 }
@@ -1026,7 +1046,7 @@ impl Callable for HyperbolicTangent {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().tanh())))
     }
 }
@@ -1040,7 +1060,7 @@ impl Callable for SquareRoot {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value < 0.0 {
             return Err(Failure::new(
@@ -1060,7 +1080,7 @@ impl Callable for CubeRoot {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().cbrt())))
     }
 }
@@ -1074,7 +1094,7 @@ impl Callable for Absolute {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().abs())))
     }
 }
@@ -1088,7 +1108,7 @@ impl Callable for NaturalLogarithm {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
             return Err(Failure::new("logarithm requires a positive number"));
@@ -1106,7 +1126,7 @@ impl Callable for Logarithm {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::OneOrTwo)?;
+        arguments.expect(&self.name(), Arity::between(1, 2))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
             return Err(Failure::new("logarithm requires a positive number"));
@@ -1135,7 +1155,7 @@ impl Callable for BinaryLogarithm {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
             return Err(Failure::new("logarithm requires a positive number"));
@@ -1153,7 +1173,7 @@ impl Callable for DecimalLogarithm {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
             return Err(Failure::new("logarithm requires a positive number"));
@@ -1171,7 +1191,7 @@ impl Callable for Exponential {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().exp())))
     }
 }
@@ -1185,7 +1205,7 @@ impl Callable for Floor {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().floor())))
     }
 }
@@ -1199,7 +1219,7 @@ impl Callable for Ceiling {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().ceil())))
     }
 }
@@ -1213,7 +1233,7 @@ impl Callable for Round {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::OneOrTwo)?;
+        arguments.expect(&self.name(), Arity::between(1, 2))?;
         let value = arguments.number(0)?.value();
         if arguments.len() == 1 {
             return Ok(Value::new(Number::new(value.round())));
@@ -1238,7 +1258,7 @@ impl Callable for Truncate {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().trunc())))
     }
 }
@@ -1252,7 +1272,7 @@ impl Callable for Sign {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::One)?;
+        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         let sign = if value == 0.0 { 0.0 } else { value.signum() };
         Ok(Value::new(Number::new(sign)))
@@ -1268,7 +1288,7 @@ impl Callable for Minimum {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Many)?;
+        arguments.expect(&self.name(), Arity::at_least(1))?;
         let numbers = arguments.numbers()?;
         let minimum = numbers
             .iter()
@@ -1287,7 +1307,7 @@ impl Callable for Maximum {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Many)?;
+        arguments.expect(&self.name(), Arity::at_least(1))?;
         let numbers = arguments.numbers()?;
         let maximum = numbers
             .iter()
@@ -1306,7 +1326,7 @@ impl Callable for Hypotenuse {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Two)?;
+        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(
             left.value().hypot(right.value()),
@@ -1703,7 +1723,7 @@ impl Callable for Defined {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::Exact(self.parameters.len()))?;
+        arguments.expect(&self.name(), Arity::exactly(self.parameters.len()))?;
         let depth = self.depth.get() + 1;
         if depth > 64 {
             return Err(Failure::new("recursion is too deep"));

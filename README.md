@@ -9,6 +9,7 @@ A borderless, always-on-top pop-up calculator for the desktop. Press the global 
 - `Ctrl+Q` quits.
 - Click a result to copy it. `Ctrl`-click any word in the sheet to copy that word.
 - Hover a word to see what it is: a number, a function, a text, or an error.
+- Start typing a name and a list of matches appears; arrow keys pick one, `Enter` or `Tab` inserts it, `Escape` dismisses it.
 - Drag the top strip to move the window.
 - The hotkey can be changed from Settings.
 
@@ -37,6 +38,10 @@ On launch the app checks the latest GitHub release in the background. If a newer
 ## Features
 
 - Multiline expressions with a live result on every line.
+- Grouped numbers: `1,234,567` is one number, and results come back grouped. Inside `(...)` a comma always separates arguments, so `min(300,100,200)` is three arguments.
+- Persian digits and separators: `۱۲۳ + ۴`, `۱٬۲۳۴`, `۲٫۵`, and `min(۱،۲)` read as their Latin equivalents.
+- Brackets are coloured by nesting depth; a bracket without a partner is red.
+- Autocomplete on every name the sheet knows: functions, constants, and the variables you defined.
 - `DEG` / `RAD` toggle in the header.
 - Variables: `x = 7`, then `x * 6`.
 - Functions: `double(n) = n * 2`, then `double(21)`. Parameters are bound in a child scope that still sees the sheet's variables, so a function can use values assigned elsewhere, and functions can take other functions: `apply(g, a, b) = g(a, b)` then `apply(add, 2, 3)`.

@@ -243,6 +243,10 @@ impl Expression {
                     normalized.push('-');
                     sources.push(index);
                 }
+                '٬' | '،' => {
+                    normalized.push(',');
+                    sources.push(index);
+                }
                 '٫' => {
                     normalized.push('.');
                     sources.push(index);
@@ -364,19 +368,41 @@ impl Reading {
     }
 }
 
-pub struct Readings(Vec<Reading>);
+pub struct Name {
+    text: Text,
+    value: Value,
+}
+
+impl Name {
+    pub fn text(&self) -> &Text {
+        &self.text
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+}
+
+pub struct Readings {
+    lines: Vec<Reading>,
+    names: Vec<Name>,
+}
+
+impl Readings {
+    fn new(lines: Vec<Reading>, names: Vec<Name>) -> Self {
+        Self { lines, names }
+    }
+
+    pub fn names(&self) -> &[Name] {
+        &self.names
+    }
+}
 
 impl std::ops::Deref for Readings {
     type Target = [Reading];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Vec<Reading>> for Readings {
-    fn from(readings: Vec<Reading>) -> Self {
-        Self(readings)
+        &self.lines
     }
 }
 
@@ -385,7 +411,7 @@ impl IntoIterator for Readings {
     type IntoIter = std::vec::IntoIter<Reading>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.lines.into_iter()
     }
 }
 
@@ -394,7 +420,7 @@ impl<'a> IntoIterator for &'a Readings {
     type IntoIter = std::slice::Iter<'a, Reading>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.lines.iter()
     }
 }
 
@@ -507,6 +533,7 @@ impl Tokens {
 struct Lexer {
     characters: Vec<char>,
     position: usize,
+    depth: usize,
 }
 
 impl Lexer {
@@ -514,6 +541,7 @@ impl Lexer {
         Self {
             characters: expression.as_ref().chars().collect(),
             position: 0,
+            depth: 0,
         }
     }
 
@@ -538,10 +566,12 @@ impl Lexer {
         match character {
             '(' => {
                 self.bump();
+                self.depth += 1;
                 Ok(Token::LeftParenthesis)
             }
             ')' => {
                 self.bump();
+                self.depth = self.depth.saturating_sub(1);
                 Ok(Token::RightParenthesis)
             }
             ',' => {
@@ -579,6 +609,10 @@ impl Lexer {
         }
         let mut text = String::new();
         self.digits(10, &mut text);
+        while self.depth == 0 && self.grouped() {
+            self.bump();
+            self.digits(10, &mut text);
+        }
         if self.peek() == Some('.') {
             if let Some(character) = self.bump() {
                 text.push(character);
@@ -610,6 +644,17 @@ impl Lexer {
             .parse::<f64>()
             .map_err(|_| Failure::new("invalid number"))?;
         Ok(Token::Number(Number::new(number)))
+    }
+
+    fn grouped(&self) -> bool {
+        self.peek() == Some(',')
+            && (1..=3).all(|offset| {
+                self.peek_after(offset)
+                    .is_some_and(|character| character.is_ascii_digit())
+            })
+            && !self
+                .peek_after(4)
+                .is_some_and(|character| character.is_ascii_digit())
     }
 
     fn radix(&mut self, radix: u32) -> Result<Token, Failure> {
@@ -1551,6 +1596,19 @@ impl Constants {
     fn contains(&self, name: &Identifier) -> bool {
         self.values.contains_key(name)
     }
+
+    fn names(&self) -> Vec<Name> {
+        let mut names: Vec<Name> = self
+            .values
+            .iter()
+            .map(|(identifier, number)| Name {
+                text: Text::new(identifier.to_string()),
+                value: Value::new(*number),
+            })
+            .collect();
+        names.sort_by(|left, right| left.text.as_ref().cmp(right.text.as_ref()));
+        names
+    }
 }
 
 struct Functions {
@@ -1697,6 +1755,19 @@ impl Functions {
     fn contains(&self, name: &Identifier) -> bool {
         self.entries.contains_key(name)
     }
+
+    fn names(&self) -> Vec<Name> {
+        let mut names: Vec<Name> = self
+            .entries
+            .iter()
+            .map(|(identifier, value)| Name {
+                text: Text::new(identifier.to_string()),
+                value: value.clone(),
+            })
+            .collect();
+        names.sort_by(|left, right| left.text.as_ref().cmp(right.text.as_ref()));
+        names
+    }
 }
 
 struct Variables {
@@ -1784,6 +1855,28 @@ impl Session {
             .borrow_mut()
             .values
             .insert(Identifier::new("ans"), value);
+    }
+
+    fn names(&self) -> Vec<Name> {
+        let mut names = Vec::new();
+        let mut current = Some(std::rc::Rc::clone(&self.variables));
+        while let Some(scope) = current {
+            let borrow = scope.borrow();
+            for (identifier, value) in &borrow.values {
+                if identifier.is_answer() {
+                    continue;
+                }
+                names.push(Name {
+                    text: Text::new(identifier.to_string()),
+                    value: value.clone(),
+                });
+            }
+            current = borrow.parent.clone();
+        }
+        names.sort_by(|left, right| left.text.as_ref().cmp(right.text.as_ref()));
+        names.extend(self.language.functions.names());
+        names.extend(self.language.constants.names());
+        names
     }
 }
 
@@ -2077,7 +2170,7 @@ impl Calculator {
         let session = Session::new(std::rc::Rc::new(Language::new(angle)));
         let mut readings = Vec::with_capacity(source.line_count());
         readings.extend(source.lines().map(|line| self.evaluate_line(line, &session)));
-        Readings::from(readings)
+        Readings::new(readings, session.names())
     }
 
     fn evaluate_line(&self, line: Line<'_>, session: &Session) -> Reading {

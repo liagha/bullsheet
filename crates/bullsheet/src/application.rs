@@ -550,6 +550,12 @@ impl eframe::App for Application {
                             let gutter_right = viewport.right() - 10.0;
                             let editor_width =
                                 (gutter_right - gutter_width - spacing - viewport.left()).max(100.0);
+                            let depths = [
+                                Color32::from_rgb(86, 182, 194),
+                                Color32::from_rgb(206, 145, 120),
+                                Color32::from_rgb(197, 134, 192),
+                            ];
+                            let unmatched = Color32::from_rgb(255, 123, 114);
                             let mut layouter = |ui: &egui::Ui,
                                                 text: &dyn egui::TextBuffer,
                                                 _wrap_width: f32| {
@@ -564,40 +570,68 @@ impl eframe::App for Application {
                                         .map(|(byte, _)| byte)
                                         .chain(std::iter::once(line.len()))
                                         .collect();
-                                    let mut position = 0;
+                                    let mut runs: Vec<(usize, usize, Color32)> = Vec::new();
                                     if let Some(reading) = readings.get(index) {
                                         for part in reading.parts() {
                                             let span = part.span();
                                             let start = span.start.min(characters);
                                             let end = span.end.min(characters).max(start);
-                                            if start < position || start >= end {
+                                            if start >= end {
                                                 continue;
-                                            }
-                                            if start > position {
-                                                job.append(
-                                                    &line[boundaries[position]..boundaries[start]],
-                                                    0.0,
-                                                    egui::TextFormat {
-                                                        font_id: font.clone(),
-                                                        color: base,
-                                                        ..Default::default()
-                                                    },
-                                                );
                                             }
                                             let color = renderers
                                                 .render(part.value())
                                                 .map_or(base, |shown| shown.color);
+                                            runs.push((start, end, color));
+                                        }
+                                    }
+                                    let mut open: Vec<usize> = Vec::new();
+                                    for (position, character) in line.chars().enumerate() {
+                                        match character {
+                                            '(' => open.push(position),
+                                            ')' => match open.pop() {
+                                                Some(partner) => {
+                                                    let color = depths[open.len() % depths.len()];
+                                                    runs.push((partner, partner + 1, color));
+                                                    runs.push((position, position + 1, color));
+                                                }
+                                                None => {
+                                                    runs.push((position, position + 1, unmatched))
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    }
+                                    for partner in open {
+                                        runs.push((partner, partner + 1, unmatched));
+                                    }
+                                    runs.sort_by_key(|(start, _, _)| *start);
+                                    let mut position = 0;
+                                    for (start, end, color) in runs {
+                                        if start < position || start >= end {
+                                            continue;
+                                        }
+                                        if start > position {
                                             job.append(
-                                                &line[boundaries[start]..boundaries[end]],
+                                                &line[boundaries[position]..boundaries[start]],
                                                 0.0,
                                                 egui::TextFormat {
                                                     font_id: font.clone(),
-                                                    color,
+                                                    color: base,
                                                     ..Default::default()
                                                 },
                                             );
-                                            position = end;
                                         }
+                                        job.append(
+                                            &line[boundaries[start]..boundaries[end]],
+                                            0.0,
+                                            egui::TextFormat {
+                                                font_id: font.clone(),
+                                                color,
+                                                ..Default::default()
+                                            },
+                                        );
+                                        position = end;
                                     }
                                     if position < characters {
                                         job.append(
@@ -624,18 +658,47 @@ impl eframe::App for Application {
                                 }
                                 ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
                             };
-                            let mut output = egui::TextEdit::multiline(source.as_mut())
-                                .id(ui.scope_id().with("source"))
-                                .font(FontId::monospace(16.0))
-                                .text_color(base)
-                                .desired_width(editor_width)
-                                .desired_rows(10)
-                                .frame(egui::Frame::NONE)
-                                .margin(egui::Margin::ZERO)
-                                .hint_text("Type an expression")
-                                .layouter(&mut layouter)
-                                .show(ui);
-                            if output.response.changed() {
+                            let completion = egui::CompletionPopup::new(ui.scope_id().with("source"))
+                                .word_boundary(|character| {
+                                    !(character.is_ascii_alphanumeric() || character == '_')
+                                })
+                                .max_height(160.0)
+                                .show(
+                                    ui,
+                                    egui::TextEdit::multiline(source.as_mut())
+                                        .font(FontId::monospace(16.0))
+                                        .text_color(base)
+                                        .desired_width(editor_width)
+                                        .desired_rows(10)
+                                        .frame(egui::Frame::NONE)
+                                        .margin(egui::Margin::ZERO)
+                                        .hint_text("Type an expression")
+                                        .layouter(&mut layouter),
+                                    |query| {
+                                        if query.word.is_empty() {
+                                            return Vec::new();
+                                        }
+                                        readings
+                                            .names()
+                                            .iter()
+                                            .filter(|name| {
+                                                let text = name.text().as_ref();
+                                                text.starts_with(query.word) && text != query.word
+                                            })
+                                            .take(8)
+                                            .map(|name| {
+                                                let text = name.text().as_ref();
+                                                let kind = renderers
+                                                    .render(name.value())
+                                                    .map_or("", |shown| shown.kind);
+                                                egui::Suggestion::new(text).description(kind)
+                                            })
+                                            .collect()
+                                    },
+                                );
+                            let accepted = completion.accepted.is_some();
+                            let mut output = completion.text_edit;
+                            if accepted || output.response.changed() {
                                 *readings = calculator.evaluate(source, angle);
                             }
                             if *focus_requested {

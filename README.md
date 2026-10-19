@@ -1,4 +1,4 @@
-# Calculator
+# bullsheet
 
 A borderless, always-on-top pop-up calculator for the desktop. Press the global hotkey, type one expression per line, and read the result to the right of each line.
 
@@ -42,8 +42,8 @@ cargo build --release
 
 The binary is written to:
 
-- Windows: `target\release\calculator.exe`
-- Linux and macOS: `target/release/calculator`
+- Windows: `target\release\bullsheet.exe`
+- Linux and macOS: `target/release/bullsheet`
 
 Run it with:
 
@@ -56,8 +56,8 @@ cargo run --release
 Autostart is handled by the app itself. No installer or startup script is required.
 
 - Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-- Linux: `~/.config/autostart/calculator.desktop`
-- macOS: `~/Library/LaunchAgents/calculator.plist`
+- Linux: `~/.config/autostart/bullsheet.desktop`
+- macOS: `~/Library/LaunchAgents/bullsheet.plist`
 
 If you move the executable, turn `Start with system` off and on again so the entry points at the new location.
 

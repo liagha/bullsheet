@@ -10,7 +10,7 @@ impl Instance {
                 "no home directory",
             )
         })?;
-        let directory = base.data_dir().join("calculator");
+        let directory = base.data_dir().join("bullsheet");
         std::fs::create_dir_all(&directory)?;
         let file = std::fs::OpenOptions::new()
             .create(true)

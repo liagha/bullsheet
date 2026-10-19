@@ -8,8 +8,24 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          echo "tag=$tag version=$version"
+          test "$tag" = "$version"
+
   windows:
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,16 +43,17 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/calculator.exe package/
+          Copy-Item target/x86_64-pc-windows-msvc/release/bullsheet.exe package/
           Copy-Item README.md package/
-          Compress-Archive -Path package/calculator.exe, package/README.md -DestinationPath calculator-windows-x86_64.zip
+          Compress-Archive -Path package/bullsheet.exe, package/README.md -DestinationPath bullsheet-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: calculator-windows-x86_64.zip
+          path: bullsheet-windows-x86_64.zip
           if-no-files-found: error
 
   linux:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,16 +72,17 @@ jobs:
       - name: Package
         run: |
           mkdir package
-          cp target/x86_64-unknown-linux-gnu/release/calculator package/
+          cp target/x86_64-unknown-linux-gnu/release/bullsheet package/
           cp README.md package/
-          tar -czf calculator-linux-x86_64.tar.gz -C package .
+          tar -czf bullsheet-linux-x86_64.tar.gz -C package .
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
-          path: calculator-linux-x86_64.tar.gz
+          path: bullsheet-linux-x86_64.tar.gz
           if-no-files-found: error
 
   macos:
+    needs: check
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,31 +97,32 @@ jobs:
           cargo build --release --locked --target x86_64-apple-darwin
       - name: Package
         run: |
-          mkdir -p Calculator.app/Contents/MacOS
-          mkdir -p Calculator.app/Contents/Resources
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p bullsheet.app/Contents/MacOS
+          mkdir -p bullsheet.app/Contents/Resources
           lipo -create \
-            target/aarch64-apple-darwin/release/calculator \
-            target/x86_64-apple-darwin/release/calculator \
-            -output Calculator.app/Contents/MacOS/calculator
-          chmod +x Calculator.app/Contents/MacOS/calculator
-          cp README.md Calculator.app/Contents/Resources/README.md
-          cat > Calculator.app/Contents/Info.plist <<'EOF'
+            target/aarch64-apple-darwin/release/bullsheet \
+            target/x86_64-apple-darwin/release/bullsheet \
+            -output bullsheet.app/Contents/MacOS/bullsheet
+          chmod +x bullsheet.app/Contents/MacOS/bullsheet
+          cp README.md bullsheet.app/Contents/Resources/README.md
+          cat > bullsheet.app/Contents/Info.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>CFBundleName</key>
-            <string>Calculator</string>
+            <string>bullsheet</string>
             <key>CFBundleDisplayName</key>
-            <string>Calculator</string>
+            <string>bullsheet</string>
             <key>CFBundleIdentifier</key>
-            <string>com.calculator.app</string>
+            <string>com.bullsheet.app</string>
             <key>CFBundleVersion</key>
-            <string>0.1.0</string>
+            <string>${version}</string>
             <key>CFBundleShortVersionString</key>
-            <string>0.1.0</string>
+            <string>${version}</string>
             <key>CFBundleExecutable</key>
-            <string>calculator</string>
+            <string>bullsheet</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>LSMinimumSystemVersion</key>
@@ -113,11 +132,11 @@ jobs:
           </dict>
           </plist>
           EOF
-          zip -r calculator-macos-universal.zip Calculator.app
+          zip -r bullsheet-macos-universal.zip bullsheet.app
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos
-          path: calculator-macos-universal.zip
+          path: bullsheet-macos-universal.zip
           if-no-files-found: error
 
   release:

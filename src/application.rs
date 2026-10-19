@@ -6,6 +6,7 @@ pub(crate) struct Application {
     calculator: crate::calculator::Calculator,
     results: crate::calculator::Results,
     angle: crate::calculator::Angle,
+    decorations: crate::decorations::Decorations,
     combination: crate::shortcut::Combination,
     popup: crate::popup::Popup,
     shortcut: Option<crate::shortcut::Shortcut>,
@@ -31,7 +32,7 @@ impl Application {
         };
         let hidden = std::env::args().any(|argument| argument == "--hidden");
         let viewport = eframe::egui::ViewportBuilder::default()
-            .with_title("Calculator")
+            .with_title("bullsheet")
             .with_inner_size([640.0, 440.0])
             .with_decorations(false)
             .with_transparent(false)
@@ -48,7 +49,7 @@ impl Application {
             ..Default::default()
         };
         eframe::run_native(
-            "Calculator",
+            "bullsheet",
             options,
             Box::new(move |context| {
                 Ok(Box::new(Self::new(context, hidden)) as Box<dyn eframe::App>)
@@ -61,6 +62,7 @@ impl Application {
         use crate::calculator::{
             Angle, Calculator, Failure, Presentation, Source,
         };
+        use crate::decorations::Decorations;
         use crate::popup::{Popup, Visibility};
         use crate::shortcut::{Combination, Shortcut};
         use eframe::egui::{FontData, FontDefinitions, FontFamily};
@@ -112,6 +114,7 @@ impl Application {
             calculator,
             results,
             angle,
+            decorations: Decorations::new(),
             combination,
             popup: Popup::new(if visible {
                 Visibility::Visible
@@ -288,60 +291,12 @@ impl eframe::App for Application {
         eframe::egui::Color32::from_rgb(32, 32, 32).to_normalized_gamma_f32()
     }
 
-    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
         use crate::calculator::Evaluation;
         use eframe::egui::{
             self, Align2, Color32, FontId, Key, Rect, RichText, Sense, Stroke, Vec2,
         };
-        #[cfg(target_os = "windows")]
-        {
-            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            use windows_sys::Win32::Graphics::Dwm::{
-                DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
-            };
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GetWindowLongPtrW, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-                SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_CAPTION,
-                WS_SYSMENU,
-            };
-            if let Ok(handle) = _frame.window_handle() {
-                if let RawWindowHandle::Win32(window) = handle.as_raw() {
-                    let window_handle = window.hwnd.get() as *mut core::ffi::c_void;
-                    let style = unsafe { GetWindowLongPtrW(window_handle, GWL_STYLE) };
-                    if style & ((WS_CAPTION | WS_SYSMENU) as isize) != 0 {
-                        unsafe {
-                            let _ = SetWindowLongPtrW(
-                                window_handle,
-                                GWL_STYLE,
-                                style & !((WS_CAPTION | WS_SYSMENU) as isize),
-                            );
-                            let _ = SetWindowPos(
-                                window_handle,
-                                std::ptr::null_mut(),
-                                0,
-                                0,
-                                0,
-                                0,
-                                SWP_FRAMECHANGED
-                                    | SWP_NOMOVE
-                                    | SWP_NOSIZE
-                                    | SWP_NOZORDER
-                                    | SWP_NOACTIVATE,
-                            );
-                        }
-                    }
-                    let corner = DWMWCP_ROUND;
-                    let _ = unsafe {
-                        DwmSetWindowAttribute(
-                            window_handle,
-                            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
-                            &corner as *const i32 as *const core::ffi::c_void,
-                            std::mem::size_of::<i32>() as u32,
-                        )
-                    };
-                }
-            }
-        }
+        self.decorations.apply(frame);
         let context = ui.ctx().clone();
         if context.input(|input| input.key_pressed(Key::Escape)) {
             if self.settings_open {

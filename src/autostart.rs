@@ -5,7 +5,7 @@ pub(crate) struct Autostart {
 }
 
 #[cfg(target_os = "windows")]
-const AUTOSTART_VALUE: &str = "Calculator";
+const AUTOSTART_VALUE: &str = "bullsheet";
 
 #[cfg(target_os = "windows")]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -155,7 +155,7 @@ impl Autostart {
             entry: base
                 .config_dir()
                 .join("autostart")
-                .join("calculator.desktop"),
+                .join("bullsheet.desktop"),
         })
     }
 
@@ -168,7 +168,7 @@ impl Autostart {
             std::fs::create_dir_all(directory)?;
         }
         let contents = format!(
-            "[Desktop Entry]\nType=Application\nName=Calculator\nExec=\"{}\" --hidden\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+            "[Desktop Entry]\nType=Application\nName=bullsheet\nExec=\"{}\" --hidden\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
             self.executable.display()
         );
         std::fs::write(&self.entry, contents)
@@ -202,7 +202,7 @@ impl Autostart {
                 .home_dir()
                 .join("Library")
                 .join("LaunchAgents")
-                .join("calculator.plist"),
+                .join("bullsheet.plist"),
         })
     }
 
@@ -223,7 +223,7 @@ impl Autostart {
             .replace('>', "&gt;")
             .replace('"', "&quot;");
         let contents = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n<key>Label</key>\n<string>com.calculator.app</string>\n<key>ProgramArguments</key>\n<array>\n<string>{executable}</string>\n<string>--hidden</string>\n</array>\n<key>RunAtLoad</key>\n<true/>\n</dict>\n</plist>\n"
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n<key>Label</key>\n<string>com.bullsheet.app</string>\n<key>ProgramArguments</key>\n<array>\n<string>{executable}</string>\n<string>--hidden</string>\n</array>\n<key>RunAtLoad</key>\n<true/>\n</dict>\n</plist>\n"
         );
         std::fs::write(&self.entry, contents)
     }

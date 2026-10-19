@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -17,19 +21,19 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: calculator.exe
+            binary: bullsheet.exe
             rustflags: -C target-feature=+crt-static
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary: calculator
+            binary: bullsheet
             rustflags: ""
           - os: macos-latest
             target: aarch64-apple-darwin
-            binary: calculator
+            binary: bullsheet
             rustflags: ""
           - os: macos-latest
             target: x86_64-apple-darwin
-            binary: calculator
+            binary: bullsheet
             rustflags: ""
     runs-on: ${{ matrix.os }}
     steps:
@@ -51,6 +55,6 @@ jobs:
           RUSTFLAGS: ${{ matrix.rustflags }}
       - uses: actions/upload-artifact@v4
         with:
-          name: calculator-${{ matrix.target }}
+          name: bullsheet-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           if-no-files-found: error

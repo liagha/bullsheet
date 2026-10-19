@@ -62,6 +62,12 @@ Run it with:
 cargo run --release
 ```
 
+## Layout
+
+- `crates/bullsheet` — the pop-up window and everything around it.
+- `crates/evaluator` — the expression language: text in, values out.
+- `crates/element` — values and how they present.
+
 ## Autostart
 
 Autostart is handled by the app itself. No installer or startup script is required.
@@ -88,4 +94,4 @@ GitHub Actions builds and packages release artifacts:
 
 ## Font
 
-The UI uses JetBrains Mono, bundled under the SIL Open Font License. See `assets/OFL.txt`.
+The UI uses JetBrains Mono, bundled under the SIL Open Font License. See `crates/bullsheet/assets/OFL.txt`.

@@ -360,6 +360,8 @@ version = "0.2.1"
 dependencies = [
  "directories",
  "eframe",
+ "element",
+ "evaluator",
  "global-hotkey",
  "raw-window-handle",
  "self_update",
@@ -1013,6 +1015,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
+name = "element"
+version = "0.2.1"
+
+[[package]]
 name = "emath"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1136,6 +1142,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "evaluator"
+version = "0.2.1"
+dependencies = [
+ "element",
 ]
 
 [[package]]

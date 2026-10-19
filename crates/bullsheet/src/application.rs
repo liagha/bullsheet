@@ -2,22 +2,22 @@ const ANGLE_KEY: &str = "angle";
 const SHORTCUT_KEY: &str = "shortcut";
 
 pub(crate) struct Application {
-    source: crate::calculator::Source,
-    calculator: crate::calculator::Calculator,
-    results: crate::calculator::Results,
-    angle: crate::calculator::Angle,
+    source: evaluator::Source,
+    calculator: evaluator::Calculator,
+    results: evaluator::Results,
+    angle: evaluator::Angle,
     decorations: crate::decorations::Decorations,
     combination: crate::shortcut::Combination,
     popup: crate::popup::Popup,
     shortcut: Option<crate::shortcut::Shortcut>,
-    shortcut_failure: Option<crate::calculator::Presentation>,
+    shortcut_failure: Option<element::Presentation>,
     settings_open: bool,
     settings_shortcut: String,
-    settings_failure: Option<crate::calculator::Failure>,
+    settings_failure: Option<element::Failure>,
     autostart: Option<crate::autostart::Autostart>,
-    autostart_failure: Option<crate::calculator::Failure>,
+    autostart_failure: Option<element::Failure>,
     tray: Option<crate::tray::Tray>,
-    tray_failure: Option<crate::calculator::Failure>,
+    tray_failure: Option<element::Failure>,
     updater: crate::update::Updater,
     update_report: Option<crate::update::Report>,
     startup_hidden: bool,
@@ -64,15 +64,14 @@ impl Application {
 
     fn new(context: &eframe::CreationContext<'_>, hidden: bool) -> Self {
         use crate::autostart::Autostart;
-        use crate::calculator::{
-            Angle, Calculator, Failure, Presentation, Source,
-        };
         use crate::decorations::Decorations;
         use crate::popup::{Popup, Visibility};
         use crate::shortcut::{Combination, Shortcut};
         use crate::tray::Tray;
         use crate::update::Updater;
         use eframe::egui::{FontData, FontDefinitions, FontFamily};
+        use element::{Failure, Presentation};
+        use evaluator::{Angle, Calculator, Source};
         use std::sync::Arc;
         let family = "JetBrains Mono";
         let mut fonts = FontDefinitions::default();
@@ -269,7 +268,7 @@ impl Application {
     }
 
     fn apply_shortcut(&mut self, context: &eframe::egui::Context) {
-        use crate::calculator::Failure;
+        use element::Failure;
         use crate::shortcut::{Combination, Shortcut};
         let combination = match self.settings_shortcut.parse::<Combination>() {
             Ok(combination) => combination,
@@ -308,7 +307,7 @@ impl Application {
     }
 
     fn set_autostart(&mut self, enabled: bool) {
-        use crate::calculator::Failure;
+        use element::Failure;
         let result = self.autostart.as_ref().map(|autostart| {
             if enabled {
                 autostart.enable()
@@ -402,7 +401,7 @@ impl eframe::App for Application {
     }
 
     fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
-        use crate::calculator::Evaluation;
+        use evaluator::Evaluation;
         use eframe::egui::{
             self, Align2, Color32, FontId, Key, Rect, RichText, Sense, Stroke, Vec2,
         };

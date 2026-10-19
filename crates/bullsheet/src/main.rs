@@ -2,7 +2,6 @@
 
 mod application;
 mod autostart;
-mod calculator;
 mod decorations;
 mod icon;
 mod instance;

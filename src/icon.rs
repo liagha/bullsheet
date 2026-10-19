@@ -20,4 +20,16 @@ impl Icon {
             height: self.height,
         }
     }
+
+    pub(crate) fn rgba(&self) -> Vec<u8> {
+        self.rgba.to_vec()
+    }
+
+    pub(crate) fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub(crate) fn height(&self) -> u32 {
+        self.height
+    }
 }

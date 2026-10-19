@@ -16,6 +16,8 @@ pub(crate) struct Application {
     settings_failure: Option<crate::calculator::Failure>,
     autostart: Option<crate::autostart::Autostart>,
     autostart_failure: Option<crate::calculator::Failure>,
+    tray: Option<crate::tray::Tray>,
+    tray_failure: Option<crate::calculator::Failure>,
     startup_hidden: bool,
     focus_requested: bool,
 }
@@ -66,6 +68,7 @@ impl Application {
         use crate::decorations::Decorations;
         use crate::popup::{Popup, Visibility};
         use crate::shortcut::{Combination, Shortcut};
+        use crate::tray::Tray;
         use eframe::egui::{FontData, FontDefinitions, FontFamily};
         use std::sync::Arc;
         let family = "JetBrains Mono";
@@ -106,6 +109,14 @@ impl Application {
             Ok(autostart) => (Some(autostart), None),
             Err(error) => (None, Some(Failure::new(error.to_string()))),
         };
+        let startup = autostart
+            .as_ref()
+            .map(|autostart| autostart.enabled())
+            .unwrap_or(false);
+        let (tray, tray_failure) = match Tray::new(&context.egui_ctx, startup) {
+            Ok(tray) => (Some(tray), None),
+            Err(failure) => (None, Some(failure)),
+        };
         let calculator = Calculator::new();
         let source = Source::new(String::new());
         let results = calculator.evaluate(&source, angle);
@@ -129,13 +140,14 @@ impl Application {
             settings_failure: None,
             autostart,
             autostart_failure,
+            tray,
+            tray_failure,
             startup_hidden: !visible,
             focus_requested: visible,
         }
     }
 
     fn settings(&mut self, ui: &mut eframe::egui::Ui) {
-        use crate::calculator::Failure;
         use eframe::egui::{self, Color32, FontId, Key, RichText};
         ui.label(
             RichText::new("Settings")
@@ -150,21 +162,7 @@ impl Application {
                 .map(|autostart| autostart.enabled())
                 .unwrap_or(false);
             if ui.checkbox(&mut enabled, "Start with system").changed() {
-                let result = self.autostart.as_ref().map(|autostart| {
-                    if enabled {
-                        autostart.enable()
-                    } else {
-                        autostart.disable()
-                    }
-                });
-                match result {
-                    Some(Ok(())) => self.settings_failure = None,
-                    Some(Err(error)) => {
-                        self.settings_failure =
-                            Some(Failure::new(error.to_string()));
-                    }
-                    None => {}
-                }
+                self.set_autostart(enabled);
             }
         } else {
             let label = ui.label(
@@ -175,6 +173,15 @@ impl Application {
             if let Some(failure) = &self.autostart_failure {
                 label.on_hover_text(failure.to_string());
             }
+        }
+        if let Some(failure) = &self.tray_failure {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Tray unavailable")
+                    .size(11.0)
+                    .color(Color32::from_rgb(255, 123, 114)),
+            )
+            .on_hover_text(failure.to_string());
         }
         ui.add_space(12.0);
         ui.label(
@@ -254,6 +261,40 @@ impl Application {
             },
         }
     }
+
+    fn set_autostart(&mut self, enabled: bool) {
+        use crate::calculator::Failure;
+        let result = self.autostart.as_ref().map(|autostart| {
+            if enabled {
+                autostart.enable()
+            } else {
+                autostart.disable()
+            }
+        });
+        match result {
+            Some(Ok(())) => {
+                self.settings_failure = None;
+                if let Some(tray) = &self.tray {
+                    tray.set_autostart(enabled);
+                }
+            }
+            Some(Err(error)) => {
+                self.settings_failure = Some(Failure::new(error.to_string()));
+            }
+            None => {}
+        }
+    }
+
+    fn toggle(&mut self, context: &eframe::egui::Context) {
+        use crate::popup::Visibility;
+        self.popup.toggle(context);
+        if self.popup.visibility() == Visibility::Visible {
+            self.focus_requested = true;
+        } else {
+            self.settings_open = false;
+        }
+        context.request_repaint();
+    }
 }
 
 impl eframe::App for Application {
@@ -268,23 +309,43 @@ impl eframe::App for Application {
 
     fn logic(&mut self, context: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         use crate::popup::Visibility;
+        use crate::tray::Action;
         if self.startup_hidden {
             self.popup.hide(context);
             self.startup_hidden = false;
         }
-        if let Some(shortcut) = &self.shortcut {
-            if shortcut.requested().is_some() {
-                self.popup.toggle(context);
-                if self.popup.visibility() == Visibility::Visible {
-                    self.focus_requested = true;
-                } else {
-                    self.settings_open = false;
-                }
-                context.request_repaint();
-            }
+        let requested = self
+            .shortcut
+            .as_ref()
+            .map(|shortcut| shortcut.requested().is_some())
+            .unwrap_or(false);
+        if requested {
+            self.toggle(context);
         }
         if self.focus_requested && self.popup.visibility() == Visibility::Visible {
             self.popup.show(context);
+        }
+        match self.tray.as_ref().and_then(|tray| tray.action()) {
+            Some(Action::Toggle) => self.toggle(context),
+            Some(Action::Settings) => {
+                self.settings_open = true;
+                self.settings_shortcut = self.combination.to_string();
+                self.settings_failure = None;
+                self.focus_requested = false;
+                self.popup.show(context);
+            }
+            Some(Action::Autostart) => {
+                let enabled = !self
+                    .autostart
+                    .as_ref()
+                    .map(|autostart| autostart.enabled())
+                    .unwrap_or(false);
+                self.set_autostart(enabled);
+            }
+            Some(Action::Quit) => {
+                context.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+            }
+            None => {}
         }
     }
 

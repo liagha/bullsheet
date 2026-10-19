@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-msvc
+      - name: Build
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/calculator.exe package/
+          Copy-Item README.md package/
+          Compress-Archive -Path package/calculator.exe, package/README.md -DestinationPath calculator-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: calculator-windows-x86_64.zip
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-unknown-linux-gnu
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev
+      - name: Build
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu
+      - name: Package
+        run: |
+          mkdir package
+          cp target/x86_64-unknown-linux-gnu/release/calculator package/
+          cp README.md package/
+          tar -czf calculator-linux-x86_64.tar.gz -C package .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: calculator-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-universal
+      - name: Build
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+      - name: Package
+        run: |
+          mkdir -p Calculator.app/Contents/MacOS
+          mkdir -p Calculator.app/Contents/Resources
+          lipo -create \
+            target/aarch64-apple-darwin/release/calculator \
+            target/x86_64-apple-darwin/release/calculator \
+            -output Calculator.app/Contents/MacOS/calculator
+          chmod +x Calculator.app/Contents/MacOS/calculator
+          cp README.md Calculator.app/Contents/Resources/README.md
+          cat > Calculator.app/Contents/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>Calculator</string>
+            <key>CFBundleDisplayName</key>
+            <string>Calculator</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.calculator.app</string>
+            <key>CFBundleVersion</key>
+            <string>0.1.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>0.1.0</string>
+            <key>CFBundleExecutable</key>
+            <string>calculator</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+          zip -r calculator-macos-universal.zip Calculator.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: calculator-macos-universal.zip
+          if-no-files-found: error
+
+  release:
+    needs:
+      - windows
+      - linux
+      - macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            $(find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \))

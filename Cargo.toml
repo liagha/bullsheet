@@ -1,0 +1,21 @@
+[package]
+name = "calculator"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "A borderless, multiline pop-up calculator"
+license = "MIT"
+
+[dependencies]
+directories = "6.0"
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "persistence", "wayland", "x11"] }
+global-hotkey = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

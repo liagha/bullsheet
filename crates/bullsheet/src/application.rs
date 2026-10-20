@@ -61,7 +61,6 @@ impl Application {
         use eframe::egui::{FontData, FontDefinitions, FontFamily};
         use std::sync::Arc;
         let family = "JetBrains Mono";
-        let persian = "Vazirmatn";
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
             family.to_owned(),
@@ -69,16 +68,12 @@ impl Application {
                 "../assets/JetBrainsMono-Regular.ttf"
             ))),
         );
-        fonts.font_data.insert(
-            persian.to_owned(),
-            Arc::new(FontData::from_static(include_bytes!(
-                "../assets/Vazirmatn-Regular.ttf"
-            ))),
-        );
         for font_family in [FontFamily::Proportional, FontFamily::Monospace] {
-            let families = fonts.families.get_mut(&font_family).unwrap();
-            families.insert(0, family.to_owned());
-            families.push(persian.to_owned());
+            fonts
+                .families
+                .get_mut(&font_family)
+                .unwrap()
+                .insert(0, family.to_owned());
         }
         context.egui_ctx.set_fonts(fonts);
         let mut visuals = eframe::egui::Visuals::dark();

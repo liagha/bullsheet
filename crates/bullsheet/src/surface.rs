@@ -95,51 +95,6 @@ impl<'a> Surface<'a> {
         runs
     }
 
-    pub fn galley(
-        &self,
-        ui: &eframe::egui::Ui,
-        text: &str,
-    ) -> std::sync::Arc<eframe::egui::Galley> {
-        let mut job = eframe::egui::text::LayoutJob::default();
-        job.wrap.max_width = f32::INFINITY;
-        let lines: Vec<&str> = text.split('\n').collect();
-        for (index, line) in lines.iter().enumerate() {
-            let characters = line.chars().count();
-            let boundaries: Vec<usize> = line
-                .char_indices()
-                .map(|(byte, _)| byte)
-                .chain(std::iter::once(line.len()))
-                .collect();
-            let mut position = 0;
-            for run in self.runs(index, line) {
-                let span = run.span();
-                if span.start < position || span.end <= span.start {
-                    continue;
-                }
-                if span.start > position {
-                    job.append(
-                        &line[boundaries[position]..boundaries[span.start]],
-                        0.0,
-                        self.format(BASE),
-                    );
-                }
-                job.append(
-                    &line[boundaries[span.start]..boundaries[span.end]],
-                    0.0,
-                    self.format(run.color()),
-                );
-                position = span.end;
-            }
-            if position < characters {
-                job.append(&line[boundaries[position]..], 0.0, self.format(BASE));
-            }
-            if index + 1 < lines.len() {
-                job.append("\n", 0.0, self.format(BASE));
-            }
-        }
-        ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
-    }
-
     pub fn locate(&self, text: &str, character: usize) -> Option<(&'a evaluator::Part, String)> {
         let mut character = character;
         for (index, line) in text.split('\n').enumerate() {
@@ -164,60 +119,7 @@ impl<'a> Surface<'a> {
         None
     }
 
-    pub fn editor(
-        &self,
-        ui: &mut eframe::egui::Ui,
-        width: f32,
-        source: &mut evaluator::Source,
-    ) -> eframe::egui::CompletionOutput {
-        ui.input_mut(|input| {
-            for event in &mut input.events {
-                let text = match event {
-                    eframe::egui::Event::Text(text) | eframe::egui::Event::Paste(text) => text,
-                    eframe::egui::Event::Ime(eframe::egui::ImeEvent::Commit(text)) => text,
-                    eframe::egui::Event::Ime(eframe::egui::ImeEvent::Preedit { text, .. }) => text,
-                    _ => continue,
-                };
-                *text =
-                    text.chars()
-                        .map(|character| match character {
-                            '۰'..='۹' => char::from_digit(character as u32 - '۰' as u32, 10)
-                                .unwrap_or(character),
-                            '٠'..='٩' => char::from_digit(character as u32 - '٠' as u32, 10)
-                                .unwrap_or(character),
-                            '٬' | '،' => ',',
-                            '٫' => '.',
-                            _ => character,
-                        })
-                        .collect();
-            }
-        });
-        // egui has no bidi and shapes Arabic-script runs right to left, so Persian digits would
-        // draw mirrored; the buffer keeps the Latin form.
-        eframe::egui::CompletionPopup::new(ui.scope_id().with("source"))
-            .word_boundary(|character| !(character.is_ascii_alphanumeric() || character == '_'))
-            .align(eframe::egui::RectAlign::BOTTOM_START)
-            .max_height(96.0)
-            .show(
-                ui,
-                eframe::egui::TextEdit::multiline(source.as_mut())
-                    .font(self.font.clone())
-                    .text_color(BASE)
-                    .desired_width(width)
-                    .desired_rows(10)
-                    .frame(eframe::egui::Frame::NONE)
-                    .margin(eframe::egui::Margin::ZERO)
-                    .hint_text("Type an expression")
-                    .layouter(&mut |ui: &eframe::egui::Ui,
-                                    text: &dyn eframe::egui::TextBuffer,
-                                    _wrap_width: f32| {
-                        self.galley(ui, text.as_str())
-                    }),
-                |query| self.suggestions(query.word),
-            )
-    }
-
-    fn suggestions(&self, word: &str) -> Vec<eframe::egui::Suggestion> {
+    fn suggestions(&self, word: &str) -> Vec<crate::editor::Suggestion> {
         if word.is_empty() {
             return Vec::new();
         }
@@ -225,26 +127,39 @@ impl<'a> Surface<'a> {
             .names()
             .iter()
             .filter(|name| {
-                let text = name.text().as_ref();
-                text.starts_with(word) && text != word
+                let text = name.text();
+                text.as_ref().starts_with(word) && text.as_ref() != word
             })
             .take(8)
             .map(|name| {
-                let text = name.text().as_ref();
-                let kind = self
+                let text = name.text().to_string();
+                let description = self
                     .renderers
                     .render(name.value())
-                    .map_or("", |shown| shown.kind);
-                eframe::egui::Suggestion::new(text).description(kind)
+                    .map_or("", |shown| shown.kind)
+                    .to_owned();
+                crate::editor::Suggestion {
+                    insert: text,
+                    description,
+                }
             })
             .collect()
     }
+}
 
-    fn format(&self, color: eframe::egui::Color32) -> eframe::egui::TextFormat {
-        eframe::egui::TextFormat {
-            font_id: self.font.clone(),
-            color,
-            ..Default::default()
-        }
+impl crate::editor::Sheet for Surface<'_> {
+    fn runs(
+        &self,
+        index: usize,
+        line: &str,
+    ) -> Vec<(std::ops::Range<usize>, eframe::egui::Color32)> {
+        self.runs(index, line)
+            .into_iter()
+            .map(|run| (run.span(), run.color()))
+            .collect()
+    }
+
+    fn suggestions(&self, word: &str) -> Vec<crate::editor::Suggestion> {
+        self.suggestions(word)
     }
 }

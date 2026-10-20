@@ -4,6 +4,7 @@ mod application;
 mod autostart;
 mod calculator;
 mod decorations;
+mod editor;
 mod icon;
 mod instance;
 mod popup;

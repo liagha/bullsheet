@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "bullsheet"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "directories",
  "eframe",
@@ -1016,7 +1016,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "element"
-version = "0.2.2"
+version = "0.3.0"
 
 [[package]]
 name = "emath"
@@ -1146,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "evaluator"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "element",
 ]

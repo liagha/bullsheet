@@ -76,7 +76,6 @@ impl Application {
         use evaluator::{Angle, Calculator, Source};
         use std::sync::Arc;
         let family = "JetBrains Mono";
-        let persian = "Vazirmatn";
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
             family.to_owned(),
@@ -84,16 +83,12 @@ impl Application {
                 "../assets/JetBrainsMono-Regular.ttf"
             ))),
         );
-        fonts.font_data.insert(
-            persian.to_owned(),
-            Arc::new(FontData::from_static(include_bytes!(
-                "../assets/Vazirmatn-Regular.ttf"
-            ))),
-        );
         for font_family in [FontFamily::Proportional, FontFamily::Monospace] {
-            let families = fonts.families.get_mut(&font_family).unwrap();
-            families.insert(0, family.to_owned());
-            families.push(persian.to_owned());
+            fonts
+                .families
+                .get_mut(&font_family)
+                .unwrap()
+                .insert(0, family.to_owned());
         }
         context.egui_ctx.set_fonts(fonts);
         let mut visuals = eframe::egui::Visuals::dark();
@@ -667,6 +662,38 @@ impl eframe::App for Application {
                                 }
                                 ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
                             };
+                            ui.input_mut(|input| {
+                                for event in &mut input.events {
+                                    let text = match event {
+                                        egui::Event::Text(text) | egui::Event::Paste(text) => text,
+                                        egui::Event::Ime(egui::ImeEvent::Commit(text)) => text,
+                                        egui::Event::Ime(egui::ImeEvent::Preedit {
+                                            text, ..
+                                        }) => text,
+                                        _ => continue,
+                                    };
+                                    *text = text
+                                        .chars()
+                                        .map(|character| match character {
+                                            '۰'..='۹' => char::from_digit(
+                                                character as u32 - '۰' as u32,
+                                                10,
+                                            )
+                                            .unwrap_or(character),
+                                            '٠'..='٩' => char::from_digit(
+                                                character as u32 - '٠' as u32,
+                                                10,
+                                            )
+                                            .unwrap_or(character),
+                                            '٬' | '،' => ',',
+                                            '٫' => '.',
+                                            _ => character,
+                                        })
+                                        .collect();
+                                }
+                            });
+                            // egui has no bidi and shapes Arabic-script runs right to left, so Persian
+                            // digits would draw mirrored; the buffer keeps the Latin form.
                             let completion = egui::CompletionPopup::new(ui.scope_id().with("source"))
                                 .word_boundary(|character| {
                                     !(character.is_ascii_alphanumeric() || character == '_')

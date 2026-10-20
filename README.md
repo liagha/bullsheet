@@ -39,7 +39,7 @@ On launch the app checks the latest GitHub release in the background. If a newer
 
 - Multiline expressions with a live result on every line.
 - Grouped numbers: `1,234,567` is one number, and results come back grouped. Inside `(...)` a comma always separates arguments, so `min(300,100,200)` is three arguments.
-- Persian digits and separators: `۱۲۳ + ۴`, `۱٬۲۳۴`, `۲٫۵`, and `min(۱،۲)` read as their Latin equivalents.
+- Persian keyboard input: `۱۲۳ + ۴`, `۱٬۲۳۴`, `۲٫۵`, and `min(۱،۲)` are rewritten to `123 + 4`, `1,234`, `2.5`, and `min(1,2)` as you type, because the renderer draws Arabic-script text right to left and would mirror the digits.
 - Brackets are coloured by nesting depth; a bracket without a partner is red.
 - Autocomplete on every name the sheet knows: functions, constants, and the variables you defined.
 - `DEG` / `RAD` toggle in the header.
@@ -102,4 +102,4 @@ GitHub Actions builds and packages release artifacts:
 
 ## Font
 
-The UI uses JetBrains Mono for everything it can draw, with Vazirmatn behind it for Persian digits and punctuation. Both are bundled under the SIL Open Font License. See `crates/bullsheet/assets/OFL.txt` and `crates/bullsheet/assets/OFL-Vazirmatn.txt`.
+The UI uses JetBrains Mono, bundled under the SIL Open Font License. See `crates/bullsheet/assets/OFL.txt`.

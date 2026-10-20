@@ -1,4 +1,4 @@
-use element::{Blank, Callable, Failure, Function, Number, Text, Value};
+use element::{Blank, Callable, Failure, Function, Key, Number, Text, Truth, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Identifier(String);
@@ -438,6 +438,7 @@ impl TryFrom<char> for Symbol {
 enum Token {
     Number(Number),
     Name(Identifier),
+    Key(Key),
     Symbol(Symbol),
     LeftParenthesis,
     RightParenthesis,
@@ -448,7 +449,7 @@ impl Token {
     fn starts_value(&self) -> bool {
         matches!(
             self,
-            Self::Number(_) | Self::Name(_) | Self::LeftParenthesis
+            Self::Number(_) | Self::Name(_) | Self::Key(_) | Self::LeftParenthesis
         )
     }
 }
@@ -458,6 +459,7 @@ impl std::fmt::Display for Token {
         match self {
             Self::Number(number) => write!(formatter, "{}", number.value()),
             Self::Name(name) => write!(formatter, "{name}"),
+            Self::Key(key) => write!(formatter, "{key}"),
             Self::Symbol(symbol) => write!(formatter, "{symbol}"),
             Self::LeftParenthesis => formatter.write_str("("),
             Self::RightParenthesis => formatter.write_str(")"),
@@ -668,7 +670,60 @@ impl Lexer {
                 break;
             }
         }
+        if let Some(key) = Self::key(&text) {
+            return Token::Key(key);
+        }
         Token::Name(Identifier::new(&text))
+    }
+
+    fn key(text: &str) -> Option<Key> {
+        let modifiers = match text {
+            "Ctrl" => element::Modifiers::CONTROL,
+            "Alt" => element::Modifiers::ALT,
+            "Shift" => element::Modifiers::SHIFT,
+            "Super" => element::Modifiers::SUPER,
+            _ if Self::key_name(text) => {
+                return Some(Key::new(element::Modifiers::NONE, Text::new(text)));
+            }
+            _ => return None,
+        };
+        Some(Key::modifier(modifiers))
+    }
+
+    fn key_name(text: &str) -> bool {
+        let mut characters = text.chars();
+        if characters
+            .next()
+            .is_some_and(|character| character.is_ascii_uppercase())
+            && characters.next().is_none()
+        {
+            return true;
+        }
+        if text
+            .strip_prefix('F')
+            .and_then(|rest| rest.parse::<u8>().ok())
+            .is_some_and(|number| (1..=24).contains(&number))
+        {
+            return true;
+        }
+        matches!(
+            text,
+            "Space"
+                | "Enter"
+                | "Escape"
+                | "Tab"
+                | "Backspace"
+                | "Delete"
+                | "Insert"
+                | "Home"
+                | "End"
+                | "PageUp"
+                | "PageDown"
+                | "Left"
+                | "Right"
+                | "Up"
+                | "Down"
+        )
     }
 
     fn symbol(&mut self) -> Result<Token, Failure> {
@@ -743,6 +798,14 @@ impl<'a> Arguments<'a> {
             .and_then(|value| value.cast::<Number>())
             .copied()
             .ok_or_else(|| Failure::new("expected a number"))
+    }
+
+    fn truth(&self, index: usize) -> Result<bool, Failure> {
+        self.0
+            .get(index)
+            .and_then(|value| value.cast::<Truth>())
+            .map(|truth| truth.value())
+            .ok_or_else(|| Failure::new("expected true or false"))
     }
 
     fn numbers(&self) -> Result<Vec<Number>, Failure> {
@@ -877,8 +940,37 @@ impl Callable for Addition {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(2))?;
+        if let (Some(left), Some(right)) =
+            (values[0].cast::<Key>(), values[1].cast::<Key>())
+        {
+            return Ok(Value::new(left.combine(right)?));
+        }
+        if let (Some(key), Some(number)) =
+            (values[0].cast::<Key>(), values[1].cast::<Number>())
+        {
+            return Self::digit(key, number);
+        }
+        if let (Some(number), Some(key)) =
+            (values[0].cast::<Number>(), values[1].cast::<Key>())
+        {
+            return Self::digit(key, number);
+        }
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value() + right.value())))
+    }
+}
+
+impl Addition {
+    fn digit(key: &Key, number: &Number) -> Result<Value, Failure> {
+        let digit = number.value();
+        if digit.fract() != 0.0 || !(0.0..=9.0).contains(&digit) {
+            return Err(Failure::new("a key combines with a single digit"));
+        }
+        let digit = Key::new(
+            element::Modifiers::NONE,
+            Text::new(format!("{}", digit as u8)),
+        );
+        Ok(Value::new(key.combine(&digit)?))
     }
 }
 
@@ -999,6 +1091,73 @@ impl Callable for Percentage {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value() / 100.0)))
+    }
+}
+
+struct LogicalNot;
+
+impl Callable for LogicalNot {
+    fn name(&self) -> Text {
+        Text::new("not")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::exactly(1))?;
+        Ok(Value::new(Truth::new(!arguments.truth(0)?)))
+    }
+}
+
+struct LogicalAnd;
+
+impl Callable for LogicalAnd {
+    fn name(&self) -> Text {
+        Text::new("and")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::exactly(2))?;
+        Ok(Value::new(Truth::new(
+            arguments.truth(0)? && arguments.truth(1)?,
+        )))
+    }
+}
+
+struct LogicalOr;
+
+impl Callable for LogicalOr {
+    fn name(&self) -> Text {
+        Text::new("or")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::exactly(2))?;
+        Ok(Value::new(Truth::new(
+            arguments.truth(0)? || arguments.truth(1)?,
+        )))
+    }
+}
+
+struct Comparison {
+    name: &'static str,
+    compare: fn(f64, f64) -> bool,
+}
+
+impl Callable for Comparison {
+    fn name(&self) -> Text {
+        Text::new(self.name)
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::exactly(2))?;
+        let (left, right) = (arguments.number(0)?, arguments.number(1)?);
+        Ok(Value::new(Truth::new((self.compare)(
+            left.value(),
+            right.value(),
+        ))))
     }
 }
 
@@ -1527,30 +1686,30 @@ impl Operators {
 }
 
 struct Constants {
-    values: std::collections::HashMap<Identifier, Number>,
+    values: std::collections::HashMap<Identifier, Value>,
 }
 
 impl Constants {
     fn new() -> Self {
         use std::collections::HashMap;
         let mut values = HashMap::new();
-        values.insert(Identifier::new("pi"), Number::new(std::f64::consts::PI));
-        values.insert(Identifier::new("tau"), Number::new(std::f64::consts::TAU));
-        values.insert(Identifier::new("e"), Number::new(std::f64::consts::E));
-        values.insert(
-            Identifier::new("deg"),
-            Number::new(std::f64::consts::PI / 180.0),
-        );
-        values.insert(
-            Identifier::new("phi"),
-            Number::new((1.0 + 5.0_f64.sqrt()) / 2.0),
-        );
-        values.insert(Identifier::new("inf"), Number::new(f64::INFINITY));
+        for (name, number) in [
+            ("pi", std::f64::consts::PI),
+            ("tau", std::f64::consts::TAU),
+            ("e", std::f64::consts::E),
+            ("deg", std::f64::consts::PI / 180.0),
+            ("phi", (1.0 + 5.0_f64.sqrt()) / 2.0),
+            ("inf", f64::INFINITY),
+        ] {
+            values.insert(Identifier::new(name), Value::new(Number::new(number)));
+        }
+        values.insert(Identifier::new("true"), Value::new(Truth::new(true)));
+        values.insert(Identifier::new("false"), Value::new(Truth::new(false)));
         Self { values }
     }
 
-    fn find(&self, name: &Identifier) -> Option<Number> {
-        self.values.get(name).copied()
+    fn find(&self, name: &Identifier) -> Option<Value> {
+        self.values.get(name).cloned()
     }
 
     fn contains(&self, name: &Identifier) -> bool {
@@ -1561,9 +1720,9 @@ impl Constants {
         let mut names: Vec<Name> = self
             .values
             .iter()
-            .map(|(identifier, number)| Name {
+            .map(|(identifier, value)| Name {
                 text: Text::new(identifier.to_string()),
-                value: Value::new(*number),
+                value: value.clone(),
             })
             .collect();
         names.sort_by(|left, right| left.text.as_ref().cmp(right.text.as_ref()));
@@ -1610,6 +1769,23 @@ impl Functions {
             Identifier::new("percentage"),
             Value::new(Function::new(Percentage)),
         );
+        entries.insert(Identifier::new("not"), Value::new(Function::new(LogicalNot)));
+        entries.insert(Identifier::new("and"), Value::new(Function::new(LogicalAnd)));
+        entries.insert(Identifier::new("or"), Value::new(Function::new(LogicalOr)));
+        let comparisons: [(&str, fn(f64, f64) -> bool); 6] = [
+            ("equal", |left, right| left == right),
+            ("not_equal", |left, right| left != right),
+            ("less", |left, right| left < right),
+            ("greater", |left, right| left > right),
+            ("less_or_equal", |left, right| left <= right),
+            ("greater_or_equal", |left, right| left >= right),
+        ];
+        for (name, compare) in comparisons {
+            entries.insert(
+                Identifier::new(name),
+                Value::new(Function::new(Comparison { name, compare })),
+            );
+        }
         entries.insert(
             Identifier::new("sin"),
             Value::new(Function::new(Sine)),
@@ -1749,6 +1925,10 @@ impl Language {
             operators: Operators::new(),
         }
     }
+
+    fn learn(&mut self, name: Identifier, value: Value) {
+        self.functions.entries.insert(name, value);
+    }
 }
 
 struct Session {
@@ -1782,7 +1962,7 @@ impl Session {
             return Ok(value);
         }
         if let Some(value) = self.language.constants.find(name) {
-            return Ok(Value::new(value));
+            return Ok(value);
         }
         Err(Failure::new(format!("unknown name {name}")))
     }
@@ -2034,6 +2214,11 @@ impl<'a> Parser<'a> {
                 self.record(index, &value);
                 Ok(value)
             }
+            Token::Key(key) => {
+                let value = Value::new(key);
+                self.record(index, &value);
+                Ok(value)
+            }
             Token::Name(name) => self.name(index, name),
             Token::LeftParenthesis => {
                 let value = self.expression(Precedence::LOWEST)?;
@@ -2137,15 +2322,28 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub struct Calculator;
+pub struct Calculator {
+    installed: Vec<(Identifier, Value)>,
+}
 
 impl Calculator {
     pub fn new() -> Self {
-        Self
+        Self {
+            installed: Vec::new(),
+        }
+    }
+
+    pub fn install(&mut self, name: &str, function: Function) {
+        self.installed
+            .push((Identifier::new(name), Value::new(function)));
     }
 
     pub fn evaluate(&self, source: &Source) -> Readings {
-        let session = Session::new(std::rc::Rc::new(Language::new()));
+        let mut language = Language::new();
+        for (name, value) in &self.installed {
+            language.learn(name.clone(), value.clone());
+        }
+        let session = Session::new(std::rc::Rc::new(language));
         let mut readings = Vec::with_capacity(source.line_count());
         readings.extend(source.lines().map(|line| self.evaluate_line(line, &session)));
         Readings::new(readings, session.names())

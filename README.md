@@ -5,22 +5,25 @@ A borderless, always-on-top pop-up calculator for the desktop. Press the global 
 ## Hotkey
 
 - `Ctrl+Alt+C` toggles the calculator.
-- `Escape` hides it, or closes Settings when Settings is open.
+- `Escape` hides it.
 - `Ctrl+Q` quits.
 - Click a result to copy it; `Ctrl`-click it to copy the whole line, as in `2 * (3 + 4) = 14`.
 - `Ctrl`-click any word in the sheet to copy that word.
 - Hover a word to see what it is: a number, a function, a parameter, a text, or an error.
 - Start typing a name and a list of matches appears; arrow keys pick one, `Enter` or `Tab` inserts it, `Escape` dismisses it.
 - Drag the top strip to move the window.
-- The hotkey can be changed from Settings.
+- The hotkey can be changed from the sheet: `shortcut(Ctrl+Alt+B)`.
 
 ## Settings
 
-Open Settings from the header.
+Settings are lines in the sheet. Each one is an ordinary function: it changes the app and returns the new value, so a setting that cannot be applied shows an error in the result column.
 
-- `Start with system` writes or removes the platform autostart entry.
+- `shortcut()` reads the hotkey, `shortcut(Ctrl+Alt+B)` changes it.
+- `autostart()` reads whether the app starts with the system, `autostart(true)` and `autostart(false)` change it.
+- `version()` returns the running version.
+- `update()` returns the state of the last update check.
 - Autostart launches the app hidden, so only the global hotkey is visible.
-- `Shortcut` accepts a combination such as `Ctrl+Alt+C`, `Shift+F8`, or `Super+Space`. At least one modifier is required.
+- A shortcut is a key combination such as `Ctrl+Alt+C`, `Shift+F8`, or `Super+Space`. At least one modifier is required.
 - Only one instance runs at a time. Starting the app again while it is already running exits the new process.
 
 The window position and hotkey are remembered between launches.
@@ -30,11 +33,11 @@ The window position and hotkey are remembered between launches.
 The app places an icon in the system tray.
 
 - Left-click the icon to toggle the calculator.
-- Right-click for `Show`, `Settings`, `Start with system`, and `Quit`.
+- Right-click for `Show`, `Start with system`, and `Quit`.
 
 ## Updates
 
-On launch the app checks the latest GitHub release in the background. If a newer version exists it is downloaded and installed silently; the new version runs the next time you launch the app. Nothing is shown or interrupted while you work. The current version and the result of the last check appear in Settings.
+On launch the app checks the latest GitHub release in the background. If a newer version exists it is downloaded and installed silently; the new version runs the next time you launch the app. Nothing is shown or interrupted while you work. `version()` and `update()` in the sheet tell you what is running and what the last check found.
 
 ## Features
 
@@ -51,7 +54,10 @@ On launch the app checks the latest GitHub release in the background. If a newer
 - Percent, factorial, implicit multiplication, and `**` as power.
 - Functions including `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sqrt`, `cbrt`, `abs`, `ln`, `log`, `log2`, `log10`, `exp`, `floor`, `ceil`, `round`, `trunc`, `sign`, `min`, `max`, `hypot`, and `atan2`.
 - Every operation is a value: operators have names (`add`, `subtract`, `multiply`, `divide`, `mod`, `pow`, `negate`, `factorial`, `percentage`) and symbols work as values too, so `plus = +` gives you `plus(3, 4)`, and `sine = sin` gives you `sine(1)`.
-- Constants `pi`, `tau`, `e`, `phi`, `deg`, and `inf`.
+- Settings are values too: `shortcut(Ctrl+Alt+B)`, `autostart(true)`, `version()`, and `update()` live in the sheet instead of a settings page.
+- Keys are values: `Ctrl+Alt+C` on its own line is a key, `Ctrl+Alt+C+Shift` adds a modifier, and `shortcut(Ctrl+Alt+B)` takes one. `Ctrl+1` works for digits.
+- Booleans are values: `true`, `false`, `not(x)`, `and(x, y)`, `or(x, y)`, and `equal`, `not_equal`, `less`, `greater`, `less_or_equal`, `greater_or_equal` for numbers.
+- Constants `pi`, `tau`, `e`, `phi`, `deg`, `inf`, `true`, and `false`.
 - Persian and Arabic-Indic digits and common math symbols are normalized.
 
 ## Build

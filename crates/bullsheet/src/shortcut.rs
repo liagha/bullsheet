@@ -35,6 +35,30 @@ impl std::fmt::Display for Combination {
     }
 }
 
+impl Combination {
+    pub(crate) fn from_key(key: &element::Key) -> Result<Self, element::Failure> {
+        key.to_string().parse().map_err(|error: global_hotkey::hotkey::HotKeyParseError| {
+            element::Failure::new(error.to_string())
+        })
+    }
+
+    pub(crate) fn key(&self) -> element::Key {
+        use global_hotkey::hotkey::Modifiers;
+        let mut modifiers = element::Modifiers::NONE;
+        for (source, target) in [
+            (Modifiers::CONTROL, element::Modifiers::CONTROL),
+            (Modifiers::ALT, element::Modifiers::ALT),
+            (Modifiers::SHIFT, element::Modifiers::SHIFT),
+            (Modifiers::META, element::Modifiers::SUPER),
+        ] {
+            if self.0.mods.contains(source) {
+                modifiers = modifiers.union(target);
+            }
+        }
+        element::Key::new(modifiers, element::Text::new(Self::key_name(self.0.key)))
+    }
+}
+
 impl std::str::FromStr for Combination {
     type Err = global_hotkey::hotkey::HotKeyParseError;
 

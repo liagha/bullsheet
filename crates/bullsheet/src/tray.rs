@@ -5,13 +5,11 @@ use tray_icon::{
 };
 
 const SHOW: &str = "show";
-const SETTINGS: &str = "settings";
 const AUTOSTART: &str = "autostart";
 const QUIT: &str = "quit";
 
 pub(crate) enum Action {
     Toggle,
-    Settings,
     Autostart,
     Quit,
 }
@@ -29,7 +27,6 @@ impl Tray {
         autostart: bool,
     ) -> Result<Self, Failure> {
         let show = MenuItem::with_id(SHOW, "Show", true, None);
-        let settings = MenuItem::with_id(SETTINGS, "Settings", true, None);
         let startup = CheckMenuItem::with_id(
             AUTOSTART,
             "Start with system",
@@ -41,7 +38,6 @@ impl Tray {
         let menu = Menu::new();
         menu.append_items(&[
             &show,
-            &settings,
             &PredefinedMenuItem::separator(),
             &startup,
             &PredefinedMenuItem::separator(),
@@ -78,7 +74,6 @@ impl Tray {
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let pending = match event.id.0.as_str() {
                 SHOW => Some(Action::Toggle),
-                SETTINGS => Some(Action::Settings),
                 AUTOSTART => Some(Action::Autostart),
                 QUIT => Some(Action::Quit),
                 _ => None,

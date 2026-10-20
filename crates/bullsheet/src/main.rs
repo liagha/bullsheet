@@ -7,6 +7,7 @@ mod icon;
 mod instance;
 mod popup;
 mod render;
+mod settings;
 mod shortcut;
 mod surface;
 mod tray;

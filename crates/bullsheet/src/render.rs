@@ -137,6 +137,18 @@ impl Render for element::Truth {
     }
 }
 
+impl Render for element::Key {
+    fn render(&self) -> Option<Shown> {
+        let text = Presentation::new(self.to_string());
+        Some(Shown {
+            text: text.clone(),
+            color: eframe::egui::Color32::from_rgb(150, 190, 255),
+            plain: Some(text),
+            kind: "key",
+        })
+    }
+}
+
 impl Render for element::Function {
     fn render(&self) -> Option<Shown> {
         let text = Presentation::new(self.name().as_ref());
@@ -193,6 +205,7 @@ impl Renderers {
         renderers.learn::<element::Number>();
         renderers.learn::<element::Text>();
         renderers.learn::<element::Truth>();
+        renderers.learn::<element::Key>();
         renderers.learn::<element::Function>();
         renderers.learn::<element::Blank>();
         renderers.learn::<element::Failure>();

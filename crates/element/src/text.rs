@@ -1,3 +1,4 @@
+#[derive(Clone, Debug)]
 pub struct Text(String);
 
 impl crate::Element for Text {}

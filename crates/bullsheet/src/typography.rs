@@ -19,6 +19,7 @@ pub struct Line {
     font: eframe::egui::FontId,
     fragments: Vec<Fragment>,
     size: eframe::egui::Vec2,
+    right_to_left: bool,
 }
 
 impl Line {
@@ -111,11 +112,16 @@ impl Line {
             font: font.clone(),
             fragments,
             size: eframe::egui::vec2(width, height),
+            right_to_left: info.levels.first().is_some_and(|level| level.is_rtl()),
         }
     }
 
     pub fn size(&self) -> eframe::egui::Vec2 {
         self.size
+    }
+
+    pub fn is_right_to_left(&self) -> bool {
+        self.right_to_left
     }
 
     pub fn paint(&self, painter: &eframe::egui::Painter, position: eframe::egui::Pos2) {

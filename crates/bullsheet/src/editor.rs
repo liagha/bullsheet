@@ -19,6 +19,7 @@ pub struct Caret {
 pub struct Placed {
     pub top: f32,
     pub height: f32,
+    pub offset: f32,
     pub line: crate::typography::Line,
 }
 
@@ -78,7 +79,7 @@ impl Editor {
         sheet: &dyn Sheet,
     ) -> Output {
         use eframe::egui::{Key, Sense, vec2};
-        let mut lines = layout(ui, text, font, sheet);
+        let mut lines = layout(ui, text, font, sheet, width);
         let row = ui.ctx().fonts_mut(|fonts| fonts.row_height(font));
         let height = lines
             .iter()
@@ -216,7 +217,7 @@ impl Editor {
             }
         }
         if changed {
-            lines = layout(ui, text, font, sheet);
+            lines = layout(ui, text, font, sheet, width);
         }
         let pointer = ui.input(|input| input.pointer.interact_pos());
         let over_popup = self
@@ -264,8 +265,8 @@ impl Editor {
                 if left >= right {
                     continue;
                 }
-                let start = placed.line.x_of(ui, left);
-                let end = placed.line.x_of(ui, right);
+                let start = placed.offset + placed.line.x_of(ui, left);
+                let end = placed.offset + placed.line.x_of(ui, right);
                 let band = eframe::egui::Rect::from_min_max(
                     eframe::egui::pos2(origin.x + start.min(end), origin.y + placed.top),
                     eframe::egui::pos2(
@@ -277,16 +278,17 @@ impl Editor {
             }
         }
         for placed in &lines {
-            placed
-                .line
-                .paint(&painter, origin + eframe::egui::vec2(0.0, placed.top));
+            placed.line.paint(
+                &painter,
+                origin + eframe::egui::vec2(placed.offset, placed.top),
+            );
         }
         let now = ui.input(|input| input.time);
         let visible = (now - self.blink) % 1.0 < 0.5;
         let placed = &lines[self.caret.line.min(lines.len() - 1)];
         let caret = eframe::egui::Rect::from_min_size(
             eframe::egui::pos2(
-                origin.x + placed.line.x_of(ui, self.caret.character),
+                origin.x + placed.offset + placed.line.x_of(ui, self.caret.character),
                 origin.y + placed.top,
             ),
             vec2(1.0, placed.height),
@@ -489,7 +491,7 @@ impl Editor {
 
     fn vertical(&mut self, ui: &eframe::egui::Ui, lines: &[Placed], down: bool) {
         let current = &lines[self.caret.line.min(lines.len() - 1)];
-        let x = current.line.x_of(ui, self.caret.character);
+        let x = current.offset + current.line.x_of(ui, self.caret.character);
         let target = if down {
             self.caret.line + 1
         } else {
@@ -499,7 +501,9 @@ impl Editor {
             return;
         }
         self.caret.line = target;
-        self.caret.character = lines[target].line.character_at(ui, x);
+        self.caret.character = lines[target]
+            .line
+            .character_at(ui, x - lines[target].offset);
         self.anchor = None;
         self.blink(ui);
         self.scroll = true;
@@ -531,7 +535,9 @@ impl Editor {
             }
             line = index;
         }
-        let character = lines[line].line.character_at(ui, position.x - rect.left());
+        let character = lines[line]
+            .line
+            .character_at(ui, position.x - rect.left() - lines[line].offset);
         Caret { line, character }
     }
 
@@ -589,15 +595,33 @@ fn layout(
     text: &str,
     font: &eframe::egui::FontId,
     sheet: &dyn Sheet,
+    width: f32,
 ) -> Vec<Placed> {
     let row = ui.ctx().fonts_mut(|fonts| fonts.row_height(font));
     let mut placed = Vec::new();
     let mut top = 0.0;
-    for (index, line) in text.split('\n').enumerate() {
-        let runs = sheet.runs(index, line);
-        let line = crate::typography::Line::new(ui, line, &runs, BASE, font);
+    let mut right_to_left = false;
+    for (index, content) in text.split('\n').enumerate() {
+        let runs = sheet.runs(index, content);
+        let line = crate::typography::Line::new(ui, content, &runs, BASE, font);
         let height = line.size().y.max(row);
-        placed.push(Placed { top, height, line });
+        // An empty line keeps the direction above it, so a new Persian line starts at the right.
+        right_to_left = if content.trim().is_empty() {
+            right_to_left
+        } else {
+            line.is_right_to_left()
+        };
+        let offset = if right_to_left {
+            (width - line.size().x).max(0.0)
+        } else {
+            0.0
+        };
+        placed.push(Placed {
+            top,
+            height,
+            offset,
+            line,
+        });
         top += height;
     }
     placed

@@ -161,15 +161,22 @@ impl<'a> Line<'a> {
             if expression.is_empty() {
                 return Err(Failure::new("missing expression"));
             }
-            if let Some((name, parameters)) = Self::definition(left)? {
+            if let Some((name, span, parameters)) = Self::definition(left, offset)? {
                 return Ok(Statement::Definition {
                     name,
+                    span,
                     parameters,
                     expression,
                 });
             }
             let name = Identifier::try_from(left)?;
-            return Ok(Statement::Assignment { name, expression });
+            let start = offset + left.chars().count() - left.trim_start().chars().count();
+            let span = start..start + left.trim().chars().count();
+            return Ok(Statement::Assignment {
+                name,
+                span,
+                expression,
+            });
         }
         let expression = Expression::new(code, offset);
         if expression.is_empty() {
@@ -178,7 +185,18 @@ impl<'a> Line<'a> {
         Ok(Statement::Expression(expression))
     }
 
-    fn definition(left: &str) -> Result<Option<(Identifier, Vec<Identifier>)>, Failure> {
+    fn definition(
+        left: &str,
+        offset: usize,
+    ) -> Result<
+        Option<(
+            Identifier,
+            std::ops::Range<usize>,
+            Vec<(Identifier, std::ops::Range<usize>)>,
+        )>,
+        Failure,
+    > {
+        let start = offset + left.chars().count() - left.trim_start().chars().count();
         let left = left.trim();
         if !left.ends_with(')') {
             return Ok(None);
@@ -188,15 +206,21 @@ impl<'a> Line<'a> {
             None => return Ok(None),
         };
         let name = Identifier::try_from(left[..open].trim())?;
+        let span = start..start + left[..open].trim().chars().count();
         let mut parameters = Vec::new();
-        for parameter in left[open + 1..left.len() - 1].split(',') {
-            let parameter = parameter.trim();
-            if parameter.is_empty() {
-                continue;
+        let mut cursor = start + left[..open].chars().count() + 1;
+        for piece in left[open + 1..left.len() - 1].split(',') {
+            let parameter = piece.trim();
+            if !parameter.is_empty() {
+                let begin = cursor + piece.chars().count() - piece.trim_start().chars().count();
+                parameters.push((
+                    Identifier::try_from(parameter)?,
+                    begin..begin + parameter.chars().count(),
+                ));
             }
-            parameters.push(Identifier::try_from(parameter)?);
+            cursor += piece.chars().count() + 1;
         }
-        Ok(Some((name, parameters)))
+        Ok(Some((name, span, parameters)))
     }
 
     fn without_comment(&self) -> &'a str {
@@ -317,11 +341,13 @@ enum Statement {
     Expression(Expression),
     Assignment {
         name: Identifier,
+        span: std::ops::Range<usize>,
         expression: Expression,
     },
     Definition {
         name: Identifier,
-        parameters: Vec<Identifier>,
+        span: std::ops::Range<usize>,
+        parameters: Vec<(Identifier, std::ops::Range<usize>)>,
         expression: Expression,
     },
 }
@@ -357,6 +383,11 @@ impl Reading {
 
     fn replace(&mut self, value: Value) {
         self.value = value;
+    }
+
+    fn prefix(&mut self, mut parts: Vec<Part>) {
+        parts.append(&mut self.parts);
+        self.parts = parts;
     }
 
     pub fn value(&self) -> &Value {
@@ -1880,6 +1911,24 @@ impl Session {
     }
 }
 
+pub struct Parameter {
+    name: Text,
+}
+
+impl element::Element for Parameter {}
+
+impl Parameter {
+    fn new(name: &Identifier) -> Self {
+        Self {
+            name: Text::new(name.to_string()),
+        }
+    }
+
+    pub fn name(&self) -> &Text {
+        &self.name
+    }
+}
+
 struct Defined {
     name: Identifier,
     parameters: Vec<Identifier>,
@@ -2183,11 +2232,15 @@ impl Calculator {
                 }
                 reading
             }
-            Ok(Statement::Assignment { name, expression }) => {
+            Ok(Statement::Assignment { name, span, expression }) => {
                 let mut reading = self.evaluate_expression(&expression, session);
                 if reading.value().cast::<Failure>().is_none() {
                     match session.assign(name, reading.value().clone()) {
-                        Ok(()) => session.remember(reading.value().clone()),
+                        Ok(()) => {
+                            session.remember(reading.value().clone());
+                            let value = reading.value().clone();
+                            reading.prefix(vec![Part { span, value }]);
+                        }
                         Err(failure) => reading.replace(Value::new(failure)),
                     }
                 }
@@ -2195,21 +2248,38 @@ impl Calculator {
             }
             Ok(Statement::Definition {
                 name,
+                span,
                 parameters,
                 expression,
             }) => {
+                let mut names = Vec::with_capacity(parameters.len());
+                let mut parts = Vec::with_capacity(parameters.len() + 1);
+                for (parameter, span) in parameters {
+                    names.push(parameter.clone());
+                    parts.push(Part {
+                        span,
+                        value: Value::new(Parameter::new(&parameter)),
+                    });
+                }
                 let function = Value::new(Function::new(Defined {
                     name: name.clone(),
-                    parameters,
+                    parameters: names,
                     body: expression,
                     scope: std::rc::Rc::downgrade(&session.variables),
                     language: std::rc::Rc::clone(&session.language),
                     depth: std::rc::Rc::clone(&session.depth),
                 }));
+                parts.insert(
+                    0,
+                    Part {
+                        span,
+                        value: function.clone(),
+                    },
+                );
                 match session.assign(name, function.clone()) {
                     Ok(()) => {
                         session.remember(function.clone());
-                        Reading::without_parts(function)
+                        Reading::new(function, parts)
                     }
                     Err(failure) => Reading::without_parts(Value::new(failure)),
                 }

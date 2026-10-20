@@ -532,7 +532,6 @@ impl eframe::App for Application {
                             let spacing = 14.0;
                             let surface = crate::surface::Surface::new(readings, renderers);
                             let font = surface.font().clone();
-                            let base = surface.base();
                             let viewport = ui.clip_rect();
                             let mut gutter_width: f32 = 170.0;
                             for reading in readings.iter() {
@@ -555,81 +554,7 @@ impl eframe::App for Application {
                             let gutter_right = viewport.right() - 10.0;
                             let editor_width =
                                 (gutter_right - gutter_width - spacing - viewport.left()).max(100.0);
-                            ui.input_mut(|input| {
-                                for event in &mut input.events {
-                                    let text = match event {
-                                        egui::Event::Text(text) | egui::Event::Paste(text) => text,
-                                        egui::Event::Ime(egui::ImeEvent::Commit(text)) => text,
-                                        egui::Event::Ime(egui::ImeEvent::Preedit {
-                                            text, ..
-                                        }) => text,
-                                        _ => continue,
-                                    };
-                                    *text = text
-                                        .chars()
-                                        .map(|character| match character {
-                                            '۰'..='۹' => char::from_digit(
-                                                character as u32 - '۰' as u32,
-                                                10,
-                                            )
-                                            .unwrap_or(character),
-                                            '٠'..='٩' => char::from_digit(
-                                                character as u32 - '٠' as u32,
-                                                10,
-                                            )
-                                            .unwrap_or(character),
-                                            '٬' | '،' => ',',
-                                            '٫' => '.',
-                                            _ => character,
-                                        })
-                                        .collect();
-                                }
-                            });
-                            // egui has no bidi and shapes Arabic-script runs right to left, so Persian
-                            // digits would draw mirrored; the buffer keeps the Latin form.
-                            let completion = egui::CompletionPopup::new(ui.scope_id().with("source"))
-                                .word_boundary(|character| {
-                                    !(character.is_ascii_alphanumeric() || character == '_')
-                                })
-                                .align(egui::RectAlign::BOTTOM_START)
-                                .max_height(96.0)
-                                .show(
-                                    ui,
-                                    egui::TextEdit::multiline(source.as_mut())
-                                        .font(font.clone())
-                                        .text_color(base)
-                                        .desired_width(editor_width)
-                                        .desired_rows(10)
-                                        .frame(egui::Frame::NONE)
-                                        .margin(egui::Margin::ZERO)
-                                        .hint_text("Type an expression")
-                                        .layouter(&mut |ui: &egui::Ui,
-                                                       text: &dyn egui::TextBuffer,
-                                                       _wrap_width: f32| {
-                                            surface.galley(ui, text.as_str())
-                                        }),
-                                    |query| {
-                                        if query.word.is_empty() {
-                                            return Vec::new();
-                                        }
-                                        readings
-                                            .names()
-                                            .iter()
-                                            .filter(|name| {
-                                                let text = name.text().as_ref();
-                                                text.starts_with(query.word) && text != query.word
-                                            })
-                                            .take(8)
-                                            .map(|name| {
-                                                let text = name.text().as_ref();
-                                                let kind = renderers
-                                                    .render(name.value())
-                                                    .map_or("", |shown| shown.kind);
-                                                egui::Suggestion::new(text).description(kind)
-                                            })
-                                            .collect()
-                                    },
-                                );
+                            let completion = surface.editor(ui, editor_width, source);
                             let accepted = completion.accepted.is_some();
                             let mut output = completion.text_edit;
                             if accepted || output.response.changed() {

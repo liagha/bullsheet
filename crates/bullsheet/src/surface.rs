@@ -43,10 +43,6 @@ impl<'a> Surface<'a> {
         &self.font
     }
 
-    pub(crate) fn base(&self) -> eframe::egui::Color32 {
-        BASE
-    }
-
     pub(crate) fn runs(&self, index: usize, line: &str) -> Vec<Run> {
         let characters = line.chars().count();
         let mut runs: Vec<Run> = Vec::new();
@@ -169,6 +165,82 @@ impl<'a> Surface<'a> {
             character -= characters + 1;
         }
         None
+    }
+
+    pub(crate) fn editor(
+        &self,
+        ui: &mut eframe::egui::Ui,
+        width: f32,
+        source: &mut evaluator::Source,
+    ) -> eframe::egui::CompletionOutput {
+        ui.input_mut(|input| {
+            for event in &mut input.events {
+                let text = match event {
+                    eframe::egui::Event::Text(text) | eframe::egui::Event::Paste(text) => text,
+                    eframe::egui::Event::Ime(eframe::egui::ImeEvent::Commit(text)) => text,
+                    eframe::egui::Event::Ime(eframe::egui::ImeEvent::Preedit { text, .. }) => text,
+                    _ => continue,
+                };
+                *text = text
+                    .chars()
+                    .map(|character| match character {
+                        '۰'..='۹' => char::from_digit(character as u32 - '۰' as u32, 10)
+                            .unwrap_or(character),
+                        '٠'..='٩' => char::from_digit(character as u32 - '٠' as u32, 10)
+                            .unwrap_or(character),
+                        '٬' | '،' => ',',
+                        '٫' => '.',
+                        _ => character,
+                    })
+                    .collect();
+            }
+        });
+        // egui has no bidi and shapes Arabic-script runs right to left, so Persian digits would
+        // draw mirrored; the buffer keeps the Latin form.
+        eframe::egui::CompletionPopup::new(ui.scope_id().with("source"))
+            .word_boundary(|character| !(character.is_ascii_alphanumeric() || character == '_'))
+            .align(eframe::egui::RectAlign::BOTTOM_START)
+            .max_height(96.0)
+            .show(
+                ui,
+                eframe::egui::TextEdit::multiline(source.as_mut())
+                    .font(self.font.clone())
+                    .text_color(BASE)
+                    .desired_width(width)
+                    .desired_rows(10)
+                    .frame(eframe::egui::Frame::NONE)
+                    .margin(eframe::egui::Margin::ZERO)
+                    .hint_text("Type an expression")
+                    .layouter(&mut |ui: &eframe::egui::Ui,
+                                   text: &dyn eframe::egui::TextBuffer,
+                                   _wrap_width: f32| {
+                        self.galley(ui, text.as_str())
+                    }),
+                |query| self.suggestions(query.word),
+            )
+    }
+
+    fn suggestions(&self, word: &str) -> Vec<eframe::egui::Suggestion> {
+        if word.is_empty() {
+            return Vec::new();
+        }
+        self.readings
+            .names()
+            .iter()
+            .filter(|name| {
+                let text = name.text().as_ref();
+                text.starts_with(word) && text != word
+            })
+            .take(8)
+            .map(|name| {
+                let text = name.text().as_ref();
+                let kind = self
+                    .renderers
+                    .render(name.value())
+                    .map_or("", |shown| shown.kind);
+                eframe::egui::Suggestion::new(text).description(kind)
+            })
+            .collect()
     }
 
     fn format(&self, color: eframe::egui::Color32) -> eframe::egui::TextFormat {

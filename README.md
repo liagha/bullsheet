@@ -8,7 +8,7 @@ A borderless, always-on-top pop-up calculator for the desktop. Press the global 
 - `Escape` hides it, or closes Settings when Settings is open.
 - `Ctrl+Q` quits.
 - Click a result to copy it. `Ctrl`-click any word in the sheet to copy that word.
-- Hover a word to see what it is: a number, a function, a text, or an error.
+- Hover a word to see what it is: a number, a function, a parameter, a text, or an error.
 - Start typing a name and a list of matches appears; arrow keys pick one, `Enter` or `Tab` inserts it, `Escape` dismisses it.
 - Drag the top strip to move the window.
 - The hotkey can be changed from Settings.

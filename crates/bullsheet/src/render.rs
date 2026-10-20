@@ -155,6 +155,18 @@ impl Render for element::Blank {
     }
 }
 
+impl Render for evaluator::Parameter {
+    fn render(&self) -> Option<Shown> {
+        let text = Presentation::new(self.name().as_ref());
+        Some(Shown {
+            text: text.clone(),
+            color: eframe::egui::Color32::from_rgb(170, 176, 188),
+            plain: Some(text),
+            kind: "parameter",
+        })
+    }
+}
+
 impl Render for element::Failure {
     fn render(&self) -> Option<Shown> {
         Some(Shown {
@@ -184,6 +196,7 @@ impl Renderers {
         renderers.learn::<element::Function>();
         renderers.learn::<element::Blank>();
         renderers.learn::<element::Failure>();
+        renderers.learn::<evaluator::Parameter>();
         renderers
     }
 

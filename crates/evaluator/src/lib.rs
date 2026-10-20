@@ -37,63 +37,6 @@ impl TryFrom<&str> for Identifier {
 }
 
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Angle {
-    Radians,
-    Degrees,
-}
-
-impl Default for Angle {
-    fn default() -> Self {
-        Self::Radians
-    }
-}
-
-impl std::fmt::Display for Angle {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(match self {
-            Self::Radians => "RAD",
-            Self::Degrees => "DEG",
-        })
-    }
-}
-
-impl std::str::FromStr for Angle {
-    type Err = Failure;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        match text {
-            "RAD" => Ok(Self::Radians),
-            "DEG" => Ok(Self::Degrees),
-            _ => Err(Failure::new("invalid angle")),
-        }
-    }
-}
-
-impl Angle {
-    pub(crate) fn to_radians(self, value: Number) -> Number {
-        match self {
-            Self::Radians => value,
-            Self::Degrees => Number::new(value.value() * std::f64::consts::PI / 180.0),
-        }
-    }
-
-    pub(crate) fn from_radians(self, value: Number) -> Number {
-        match self {
-            Self::Radians => value,
-            Self::Degrees => Number::new(value.value() * 180.0 / std::f64::consts::PI),
-        }
-    }
-
-    pub fn toggled(self) -> Self {
-        match self {
-            Self::Radians => Self::Degrees,
-            Self::Degrees => Self::Radians,
-        }
-    }
-}
-
-
 #[derive(Debug)]
 pub struct Source(String);
 
@@ -1059,9 +1002,7 @@ impl Callable for Percentage {
     }
 }
 
-struct Sine {
-    angle: Angle,
-}
+struct Sine;
 
 impl Callable for Sine {
     fn name(&self) -> Text {
@@ -1071,14 +1012,11 @@ impl Callable for Sine {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
-        let radians = self.angle.to_radians(arguments.number(0)?);
-        Ok(Value::new(Number::new(radians.value().sin())))
+        Ok(Value::new(Number::new(arguments.number(0)?.value().sin())))
     }
 }
 
-struct Cosine {
-    angle: Angle,
-}
+struct Cosine;
 
 impl Callable for Cosine {
     fn name(&self) -> Text {
@@ -1088,14 +1026,11 @@ impl Callable for Cosine {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
-        let radians = self.angle.to_radians(arguments.number(0)?);
-        Ok(Value::new(Number::new(radians.value().cos())))
+        Ok(Value::new(Number::new(arguments.number(0)?.value().cos())))
     }
 }
 
-struct Tangent {
-    angle: Angle,
-}
+struct Tangent;
 
 impl Callable for Tangent {
     fn name(&self) -> Text {
@@ -1105,14 +1040,11 @@ impl Callable for Tangent {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
-        let radians = self.angle.to_radians(arguments.number(0)?);
-        Ok(Value::new(Number::new(radians.value().tan())))
+        Ok(Value::new(Number::new(arguments.number(0)?.value().tan())))
     }
 }
 
-struct Arcsine {
-    angle: Angle,
-}
+struct Arcsine;
 
 impl Callable for Arcsine {
     fn name(&self) -> Text {
@@ -1128,13 +1060,11 @@ impl Callable for Arcsine {
                 "arcsine requires a number between minus one and one",
             ));
         }
-        Ok(Value::new(self.angle.from_radians(Number::new(value.asin()))))
+        Ok(Value::new(Number::new(value.asin())))
     }
 }
 
-struct Arccosine {
-    angle: Angle,
-}
+struct Arccosine;
 
 impl Callable for Arccosine {
     fn name(&self) -> Text {
@@ -1150,13 +1080,11 @@ impl Callable for Arccosine {
                 "arccosine requires a number between minus one and one",
             ));
         }
-        Ok(Value::new(self.angle.from_radians(Number::new(value.acos()))))
+        Ok(Value::new(Number::new(value.acos())))
     }
 }
 
-struct Arctangent {
-    angle: Angle,
-}
+struct Arctangent;
 
 impl Callable for Arctangent {
     fn name(&self) -> Text {
@@ -1167,13 +1095,11 @@ impl Callable for Arctangent {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
-        Ok(Value::new(self.angle.from_radians(Number::new(value.atan()))))
+        Ok(Value::new(Number::new(value.atan())))
     }
 }
 
-struct Arctangent2 {
-    angle: Angle,
-}
+struct Arctangent2;
 
 impl Callable for Arctangent2 {
     fn name(&self) -> Text {
@@ -1184,8 +1110,7 @@ impl Callable for Arctangent2 {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
-        let radians = Number::new(left.value().atan2(right.value()));
-        Ok(Value::new(self.angle.from_radians(radians)))
+        Ok(Value::new(Number::new(left.value().atan2(right.value()))))
     }
 }
 
@@ -1613,6 +1538,10 @@ impl Constants {
         values.insert(Identifier::new("tau"), Number::new(std::f64::consts::TAU));
         values.insert(Identifier::new("e"), Number::new(std::f64::consts::E));
         values.insert(
+            Identifier::new("deg"),
+            Number::new(std::f64::consts::PI / 180.0),
+        );
+        values.insert(
             Identifier::new("phi"),
             Number::new((1.0 + 5.0_f64.sqrt()) / 2.0),
         );
@@ -1647,7 +1576,7 @@ struct Functions {
 }
 
 impl Functions {
-    fn new(angle: Angle) -> Self {
+    fn new() -> Self {
         use std::collections::HashMap;
         let mut entries = HashMap::new();
         entries.insert(
@@ -1683,31 +1612,31 @@ impl Functions {
         );
         entries.insert(
             Identifier::new("sin"),
-            Value::new(Function::new(Sine { angle })),
+            Value::new(Function::new(Sine)),
         );
         entries.insert(
             Identifier::new("cos"),
-            Value::new(Function::new(Cosine { angle })),
+            Value::new(Function::new(Cosine)),
         );
         entries.insert(
             Identifier::new("tan"),
-            Value::new(Function::new(Tangent { angle })),
+            Value::new(Function::new(Tangent)),
         );
         entries.insert(
             Identifier::new("asin"),
-            Value::new(Function::new(Arcsine { angle })),
+            Value::new(Function::new(Arcsine)),
         );
         entries.insert(
             Identifier::new("acos"),
-            Value::new(Function::new(Arccosine { angle })),
+            Value::new(Function::new(Arccosine)),
         );
         entries.insert(
             Identifier::new("atan"),
-            Value::new(Function::new(Arctangent { angle })),
+            Value::new(Function::new(Arctangent)),
         );
         entries.insert(
             Identifier::new("atan2"),
-            Value::new(Function::new(Arctangent2 { angle })),
+            Value::new(Function::new(Arctangent2)),
         );
         entries.insert(
             Identifier::new("sinh"),
@@ -1813,10 +1742,10 @@ struct Language {
 }
 
 impl Language {
-    fn new(angle: Angle) -> Self {
+    fn new() -> Self {
         Self {
             constants: Constants::new(),
-            functions: Functions::new(angle),
+            functions: Functions::new(),
             operators: Operators::new(),
         }
     }
@@ -2215,8 +2144,8 @@ impl Calculator {
         Self
     }
 
-    pub fn evaluate(&self, source: &Source, angle: Angle) -> Readings {
-        let session = Session::new(std::rc::Rc::new(Language::new(angle)));
+    pub fn evaluate(&self, source: &Source) -> Readings {
+        let session = Session::new(std::rc::Rc::new(Language::new()));
         let mut readings = Vec::with_capacity(source.line_count());
         readings.extend(source.lines().map(|line| self.evaluate_line(line, &session)));
         Readings::new(readings, session.names())

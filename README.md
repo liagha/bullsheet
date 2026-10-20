@@ -7,7 +7,8 @@ A borderless, always-on-top pop-up calculator for the desktop. Press the global 
 - `Ctrl+Alt+C` toggles the calculator.
 - `Escape` hides it, or closes Settings when Settings is open.
 - `Ctrl+Q` quits.
-- Click a result to copy it. `Ctrl`-click any word in the sheet to copy that word.
+- Click a result to copy it; `Ctrl`-click it to copy the whole line, as in `2 * (3 + 4) = 14`.
+- `Ctrl`-click any word in the sheet to copy that word.
 - Hover a word to see what it is: a number, a function, a parameter, a text, or an error.
 - Start typing a name and a list of matches appears; arrow keys pick one, `Enter` or `Tab` inserts it, `Escape` dismisses it.
 - Drag the top strip to move the window.
@@ -22,7 +23,7 @@ Open Settings from the header.
 - `Shortcut` accepts a combination such as `Ctrl+Alt+C`, `Shift+F8`, or `Super+Space`. At least one modifier is required.
 - Only one instance runs at a time. Starting the app again while it is already running exits the new process.
 
-The window position, angle mode, and hotkey are remembered between launches.
+The window position and hotkey are remembered between launches.
 
 ## Tray
 
@@ -42,7 +43,7 @@ On launch the app checks the latest GitHub release in the background. If a newer
 - Persian keyboard input: `۱۲۳ + ۴`, `۱٬۲۳۴`, `۲٫۵`, and `min(۱،۲)` are rewritten to `123 + 4`, `1,234`, `2.5`, and `min(1,2)` as you type, because the renderer draws Arabic-script text right to left and would mirror the digits.
 - Brackets are coloured by nesting depth; a bracket without a partner is red.
 - Autocomplete on every name the sheet knows: functions, constants, and the variables you defined.
-- `DEG` / `RAD` toggle in the header.
+- Trigonometry always takes radians, so the angle is part of the expression: `sin(90deg)` is one, `x = 45deg` then `cos(x)`, and `asin(0.5) / deg` is 30. `deg` is an ordinary constant, exactly `pi / 180`.
 - Variables: `x = 7`, then `x * 6`.
 - Functions: `double(n) = n * 2`, then `double(21)`. Parameters are bound in a child scope that still sees the sheet's variables, so a function can use values assigned elsewhere, and functions can take other functions: `apply(g, a, b) = g(a, b)` then `apply(add, 2, 3)`.
 - `ans` holds the last successful result.
@@ -50,7 +51,7 @@ On launch the app checks the latest GitHub release in the background. If a newer
 - Percent, factorial, implicit multiplication, and `**` as power.
 - Functions including `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sqrt`, `cbrt`, `abs`, `ln`, `log`, `log2`, `log10`, `exp`, `floor`, `ceil`, `round`, `trunc`, `sign`, `min`, `max`, `hypot`, and `atan2`.
 - Every operation is a value: operators have names (`add`, `subtract`, `multiply`, `divide`, `mod`, `pow`, `negate`, `factorial`, `percentage`) and symbols work as values too, so `plus = +` gives you `plus(3, 4)`, and `sine = sin` gives you `sine(1)`.
-- Constants `pi`, `tau`, `e`, `phi`, and `inf`.
+- Constants `pi`, `tau`, `e`, `phi`, `deg`, and `inf`.
 - Persian and Arabic-Indic digits and common math symbols are normalized.
 
 ## Build

@@ -1,11 +1,9 @@
-const ANGLE_KEY: &str = "angle";
 const SHORTCUT_KEY: &str = "shortcut";
 
 pub(crate) struct Application {
     source: evaluator::Source,
     calculator: evaluator::Calculator,
     readings: evaluator::Readings,
-    angle: evaluator::Angle,
     renderers: crate::render::Renderers,
     decorations: crate::decorations::Decorations,
     combination: crate::shortcut::Combination,
@@ -73,7 +71,7 @@ impl Application {
         use crate::update::Updater;
         use eframe::egui::{FontData, FontDefinitions, FontFamily};
         use element::Failure;
-        use evaluator::{Angle, Calculator, Source};
+        use evaluator::{Calculator, Source};
         use std::sync::Arc;
         let family = "JetBrains Mono";
         let mut fonts = FontDefinitions::default();
@@ -96,11 +94,6 @@ impl Application {
         visuals.selection.stroke =
             eframe::egui::Stroke::new(1.0, eframe::egui::Color32::from_rgb(224, 227, 233));
         context.egui_ctx.set_visuals(visuals);
-        let angle: Angle = context
-            .storage
-            .and_then(|storage| storage.get_string(ANGLE_KEY))
-            .and_then(|text| text.parse().ok())
-            .unwrap_or_default();
         let combination: Combination = context
             .storage
             .and_then(|storage| storage.get_string(SHORTCUT_KEY))
@@ -128,13 +121,12 @@ impl Application {
         let updater = Updater::new(&context.egui_ctx);
         let calculator = Calculator::new();
         let source = Source::new(String::new());
-        let readings = calculator.evaluate(&source, angle);
+        let readings = calculator.evaluate(&source);
         let visible = !hidden || shortcut.is_none();
         Self {
             source,
             calculator,
             readings,
-            angle,
             renderers: Renderers::new(),
             decorations: Decorations::new(),
             combination,
@@ -350,7 +342,6 @@ impl Application {
 
 impl eframe::App for Application {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        storage.set_string(ANGLE_KEY, self.angle.to_string());
         storage.set_string(SHORTCUT_KEY, self.combination.to_string());
     }
 
@@ -465,18 +456,6 @@ impl eframe::App for Application {
                                     self.popup.hide(&context);
                                 }
                             }
-                            let angle = ui.add(
-                                egui::Button::new(
-                                    RichText::new(self.angle.to_string())
-                                        .size(12.0)
-                                        .color(Color32::from_rgb(150, 156, 168)),
-                                )
-                                .frame(false),
-                            );
-                            if angle.clicked() {
-                                self.angle = self.angle.toggled();
-                                self.readings = self.calculator.evaluate(&self.source, self.angle);
-                            }
                             let settings = ui.add(
                                 egui::Button::new(
                                     RichText::new("Settings")
@@ -524,7 +503,6 @@ impl eframe::App for Application {
                     let source = &mut self.source;
                     let readings = &mut self.readings;
                     let renderers = &self.renderers;
-                    let angle = self.angle;
                     let focus_requested = &mut self.focus_requested;
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
@@ -558,7 +536,7 @@ impl eframe::App for Application {
                             let accepted = completion.accepted.is_some();
                             let mut output = completion.text_edit;
                             if accepted || output.response.changed() {
-                                *readings = calculator.evaluate(source, angle);
+                                *readings = calculator.evaluate(source);
                             }
                             let surface = crate::surface::Surface::new(readings, renderers);
                             if *focus_requested {
@@ -614,7 +592,24 @@ impl eframe::App for Application {
                                         );
                                     }
                                     if response.clicked() {
-                                        context.copy_text(plain.to_string());
+                                        let line = source
+                                            .as_ref()
+                                            .split('\n')
+                                            .nth(index)
+                                            .unwrap_or("")
+                                            .trim();
+                                        let copied = if context
+                                            .input(|input| input.modifiers.command)
+                                        {
+                                            if line.contains('=') {
+                                                line.to_owned()
+                                            } else {
+                                                format!("{line} = {plain}")
+                                            }
+                                        } else {
+                                            plain.to_string()
+                                        };
+                                        context.copy_text(copied);
                                     }
                                 }
                                 let text = shown.text.to_string();

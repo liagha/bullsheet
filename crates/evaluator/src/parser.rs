@@ -1,6 +1,6 @@
 use crate::lexer::{Glyph, TokenKind, Tokens};
 use crate::syntax::{Expression, Identifier, Span};
-use element::{Failure, Key, Number};
+use element::{Failure, Key, Number, Text};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Precedence(u8);
@@ -81,6 +81,7 @@ impl Shape {
 #[derive(Clone, Debug)]
 pub enum ShapeKind {
     Number(Number),
+    Text(Text),
     Key(Key),
     Name(Identifier),
     Glyph(Glyph),
@@ -221,6 +222,7 @@ impl<'a> Parser<'a> {
         let span = token.span();
         match token.kind().clone() {
             TokenKind::Number(number) => Ok(self.leaf(span, ShapeKind::Number(number))),
+            TokenKind::Text(text) => Ok(self.leaf(span, ShapeKind::Text(text))),
             TokenKind::Key(key) => Ok(self.leaf(span, ShapeKind::Key(key))),
             TokenKind::Name(name) => self.name(name, span),
             TokenKind::LeftParenthesis => {

@@ -48,6 +48,7 @@ impl TryFrom<char> for Glyph {
 #[derive(Clone, Debug)]
 pub enum TokenKind {
     Number(Number),
+    Text(Text),
     Name(Identifier),
     Key(Key),
     Glyph(Glyph),
@@ -60,7 +61,7 @@ impl TokenKind {
     pub fn starts_value(&self) -> bool {
         matches!(
             self,
-            Self::Number(_) | Self::Name(_) | Self::Key(_) | Self::LeftParenthesis
+            Self::Number(_) | Self::Text(_) | Self::Name(_) | Self::Key(_) | Self::LeftParenthesis
         )
     }
 }
@@ -69,6 +70,7 @@ impl std::fmt::Display for TokenKind {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Number(number) => write!(formatter, "{}", number.value()),
+            Self::Text(text) => write!(formatter, "{text}"),
             Self::Name(name) => write!(formatter, "{name}"),
             Self::Key(key) => write!(formatter, "{key}"),
             Self::Glyph(glyph) => write!(formatter, "{glyph}"),
@@ -174,6 +176,7 @@ impl Lexer {
                 self.bump();
                 Ok(TokenKind::Comma)
             }
+            '"' => self.text(),
             _ if character.is_ascii_digit() => self.number(),
             _ if character == '.'
                 && self.peek_after(1).is_some_and(|next| next.is_ascii_digit()) =>
@@ -238,6 +241,26 @@ impl Lexer {
             .parse::<f64>()
             .map_err(|_| Failure::new("invalid number"))?;
         Ok(TokenKind::Number(Number::new(number)))
+    }
+
+    fn text(&mut self) -> Result<TokenKind, Failure> {
+        self.bump();
+        let mut text = String::new();
+        loop {
+            match self.bump() {
+                Some('"') => return Ok(TokenKind::Text(Text::new(text))),
+                Some('\\') => match self.bump() {
+                    Some('n') => text.push('\n'),
+                    Some('t') => text.push('\t'),
+                    Some('"') => text.push('"'),
+                    Some('\\') => text.push('\\'),
+                    Some(other) => return Err(Failure::new(format!("unknown escape \\{other}"))),
+                    None => return Err(Failure::new("missing closing quote")),
+                },
+                Some(character) => text.push(character),
+                None => return Err(Failure::new("missing closing quote")),
+            }
+        }
     }
 
     fn grouped(&self) -> bool {

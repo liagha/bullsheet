@@ -20,3 +20,9 @@ impl AsRef<str> for Text {
         &self.0
     }
 }
+
+impl std::fmt::Display for Text {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}

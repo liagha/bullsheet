@@ -76,6 +76,7 @@ impl Application {
         use evaluator::{Angle, Calculator, Source};
         use std::sync::Arc;
         let family = "JetBrains Mono";
+        let persian = "Vazirmatn";
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
             family.to_owned(),
@@ -83,15 +84,23 @@ impl Application {
                 "../assets/JetBrainsMono-Regular.ttf"
             ))),
         );
+        fonts.font_data.insert(
+            persian.to_owned(),
+            Arc::new(FontData::from_static(include_bytes!(
+                "../assets/Vazirmatn-Regular.ttf"
+            ))),
+        );
         for font_family in [FontFamily::Proportional, FontFamily::Monospace] {
-            fonts
-                .families
-                .get_mut(&font_family)
-                .unwrap()
-                .insert(0, family.to_owned());
+            let families = fonts.families.get_mut(&font_family).unwrap();
+            families.insert(0, family.to_owned());
+            families.push(persian.to_owned());
         }
         context.egui_ctx.set_fonts(fonts);
-        context.egui_ctx.set_visuals(eframe::egui::Visuals::dark());
+        let mut visuals = eframe::egui::Visuals::dark();
+        visuals.selection.bg_fill = eframe::egui::Color32::from_rgb(72, 72, 72);
+        visuals.selection.stroke =
+            eframe::egui::Stroke::new(1.0, eframe::egui::Color32::from_rgb(224, 227, 233));
+        context.egui_ctx.set_visuals(visuals);
         let angle: Angle = context
             .storage
             .and_then(|storage| storage.get_string(ANGLE_KEY))
@@ -662,7 +671,7 @@ impl eframe::App for Application {
                                 .word_boundary(|character| {
                                     !(character.is_ascii_alphanumeric() || character == '_')
                                 })
-                                .max_height(160.0)
+                                .max_height(96.0)
                                 .show(
                                     ui,
                                     egui::TextEdit::multiline(source.as_mut())

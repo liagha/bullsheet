@@ -102,4 +102,4 @@ GitHub Actions builds and packages release artifacts:
 
 ## Font
 
-The UI uses JetBrains Mono, bundled under the SIL Open Font License. See `crates/bullsheet/assets/OFL.txt`.
+The UI uses JetBrains Mono for everything it can draw, with Vazirmatn behind it for Persian digits and punctuation. Both are bundled under the SIL Open Font License. See `crates/bullsheet/assets/OFL.txt` and `crates/bullsheet/assets/OFL-Vazirmatn.txt`.

@@ -305,7 +305,7 @@ impl Editor {
         self.popup = None;
         if open && !over_popup {
             let position = eframe::egui::pos2(
-                caret.left().min(origin.x + width - 140.0).max(origin.x),
+                caret.left().min(origin.x + width - 220.0).max(origin.x),
                 caret.bottom() + 4.0,
             );
             let area = eframe::egui::Area::new(response.id.with("suggestions"))
@@ -313,11 +313,22 @@ impl Editor {
                 .fixed_pos(position)
                 .show(ui.ctx(), |ui| {
                     eframe::egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.set_min_width(120.0);
+                        ui.set_width(216.0);
+                        ui.spacing_mut().item_spacing.y = 1.0;
                         for (index, suggestion) in suggestions.iter().enumerate() {
-                            let label =
-                                format!("{}  {}", suggestion.insert, suggestion.description);
-                            if ui.selectable_label(index == self.selected, label).clicked() {
+                            let label = eframe::egui::RichText::new(&suggestion.insert)
+                                .family(eframe::egui::FontFamily::Monospace);
+                            let row = ui.selectable_label(index == self.selected, label);
+                            if !suggestion.description.is_empty() {
+                                ui.painter().text(
+                                    eframe::egui::pos2(row.rect.right() - 6.0, row.rect.center().y),
+                                    eframe::egui::Align2::RIGHT_CENTER,
+                                    &suggestion.description,
+                                    eframe::egui::FontId::monospace(11.0),
+                                    eframe::egui::Color32::from_rgb(120, 120, 120),
+                                );
+                            }
+                            if row.clicked() {
                                 self.accept(text, query.as_ref(), &suggestions);
                                 changed = true;
                             }

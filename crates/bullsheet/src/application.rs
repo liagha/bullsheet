@@ -137,6 +137,8 @@ impl Application {
 
 impl eframe::App for Application {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // Left behind by the deleted degree toggle, and never read again.
+        storage.remove_string("angle");
         storage.set_string(SHORTCUT_KEY, self.settings.combination().to_string());
     }
 

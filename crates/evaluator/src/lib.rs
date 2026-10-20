@@ -1,329 +1,21 @@
+mod lexer;
+mod parser;
+mod syntax;
+
+pub use crate::syntax::Source;
+
+use crate::lexer::{Glyph, Lexer};
+use crate::parser::{Associativity, Fixity, Grammar, Parser, Precedence, Shape, ShapeKind};
+use crate::syntax::{Expression, Identifier, Line, Span, Statement};
 use element::{Blank, Callable, Failure, Function, Key, Number, Text, Truth, Value};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Identifier(String);
-
-impl Identifier {
-    pub(crate) fn new(text: &str) -> Self {
-        Self(text.to_ascii_lowercase())
-    }
-
-    pub(crate) fn is_answer(&self) -> bool {
-        self.0 == "ans"
-    }
-}
-
-impl std::fmt::Display for Identifier {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl TryFrom<&str> for Identifier {
-    type Error = Failure;
-
-    fn try_from(text: &str) -> Result<Self, Self::Error> {
-        let trimmed = text.trim();
-        let mut characters = trimmed.chars();
-        match characters.next() {
-            Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
-            _ => return Err(Failure::new("invalid name")),
-        }
-        if characters.any(|character| !(character.is_ascii_alphanumeric() || character == '_')) {
-            return Err(Failure::new("invalid name"));
-        }
-        Ok(Self(trimmed.to_ascii_lowercase()))
-    }
-}
-
-
-#[derive(Debug)]
-pub struct Source(String);
-
-impl Source {
-    pub fn new(text: String) -> Self {
-        Self(text)
-    }
-
-    pub(crate) fn line_count(&self) -> usize {
-        self.0.split('\n').count()
-    }
-
-    pub(crate) fn lines(&self) -> impl Iterator<Item = Line<'_>> {
-        self.0.split('\n').map(Line::new)
-    }
-}
-
-impl std::fmt::Display for Source {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl AsRef<str> for Source {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsMut<String> for Source {
-    fn as_mut(&mut self) -> &mut String {
-        &mut self.0
-    }
-}
-
-impl From<String> for Source {
-    fn from(text: String) -> Self {
-        Self(text)
-    }
-}
-
-impl From<&str> for Source {
-    fn from(text: &str) -> Self {
-        Self(text.to_string())
-    }
-}
-
-pub(crate) struct Line<'a> {
-    text: &'a str,
-}
-
-impl<'a> Line<'a> {
-    fn new(text: &'a str) -> Self {
-        Self { text }
-    }
-
-    fn statement(&self) -> Result<Statement, Failure> {
-        let code = self.without_comment().trim();
-        if code.is_empty() {
-            return Ok(Statement::Empty);
-        }
-        let offset = self.text.chars().count() - self.text.trim_start().chars().count();
-        if let Some((left, right)) = Self::assignment(code) {
-            let expression = Expression::new(right, offset + left.chars().count() + 1);
-            if expression.is_empty() {
-                return Err(Failure::new("missing expression"));
-            }
-            if let Some((name, span, parameters)) = Self::definition(left, offset)? {
-                return Ok(Statement::Definition {
-                    name,
-                    span,
-                    parameters,
-                    expression,
-                });
-            }
-            let name = Identifier::try_from(left)?;
-            let start = offset + left.chars().count() - left.trim_start().chars().count();
-            let span = start..start + left.trim().chars().count();
-            return Ok(Statement::Assignment {
-                name,
-                span,
-                expression,
-            });
-        }
-        let expression = Expression::new(code, offset);
-        if expression.is_empty() {
-            return Ok(Statement::Empty);
-        }
-        Ok(Statement::Expression(expression))
-    }
-
-    fn assignment(code: &str) -> Option<(&str, &str)> {
-        let characters: Vec<char> = code.chars().collect();
-        let mut depth = 0usize;
-        for (index, character) in characters.iter().enumerate() {
-            match character {
-                '(' => depth += 1,
-                ')' => depth = depth.saturating_sub(1),
-                '=' if depth == 0 => {
-                    let previous = index.checked_sub(1).map(|earlier| characters[earlier]);
-                    let next = characters.get(index + 1);
-                    if matches!(previous, Some('=' | '<' | '>' | '!')) || next == Some(&'=') {
-                        continue;
-                    }
-                    let byte = code.char_indices().nth(index)?.0;
-                    return Some((&code[..byte], &code[byte + 1..]));
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    fn definition(
-        left: &str,
-        offset: usize,
-    ) -> Result<
-        Option<(
-            Identifier,
-            std::ops::Range<usize>,
-            Vec<(Identifier, std::ops::Range<usize>)>,
-        )>,
-        Failure,
-    > {
-        let start = offset + left.chars().count() - left.trim_start().chars().count();
-        let left = left.trim();
-        if !left.ends_with(')') {
-            return Ok(None);
-        }
-        let open = match left.find('(') {
-            Some(open) => open,
-            None => return Ok(None),
-        };
-        let name = Identifier::try_from(left[..open].trim())?;
-        let span = start..start + left[..open].trim().chars().count();
-        let mut parameters = Vec::new();
-        let mut cursor = start + left[..open].chars().count() + 1;
-        for piece in left[open + 1..left.len() - 1].split(',') {
-            let parameter = piece.trim();
-            if !parameter.is_empty() {
-                let begin = cursor + piece.chars().count() - piece.trim_start().chars().count();
-                parameters.push((
-                    Identifier::try_from(parameter)?,
-                    begin..begin + parameter.chars().count(),
-                ));
-            }
-            cursor += piece.chars().count() + 1;
-        }
-        Ok(Some((name, span, parameters)))
-    }
-
-    fn without_comment(&self) -> &'a str {
-        self.text
-            .split_once('#')
-            .map_or(self.text, |(code, _)| code)
-    }
-}
-
-#[derive(Debug)]
-struct Expression {
-    text: String,
-    offset: usize,
-    sources: Vec<usize>,
-}
-
-impl Expression {
-    fn new(text: &str, offset: usize) -> Self {
-        let mut normalized = String::with_capacity(text.len());
-        let mut sources = Vec::with_capacity(text.len());
-        for (index, character) in text.chars().enumerate() {
-            match character {
-                '\u{06F0}'..='\u{06F9}' => {
-                    let digit = char::from_u32('0' as u32 + (character as u32 - '\u{06F0}' as u32))
-                        .unwrap_or('0');
-                    normalized.push(digit);
-                    sources.push(index);
-                }
-                '\u{0660}'..='\u{0669}' => {
-                    let digit = char::from_u32('0' as u32 + (character as u32 - '\u{0660}' as u32))
-                        .unwrap_or('0');
-                    normalized.push(digit);
-                    sources.push(index);
-                }
-                '×' | '·' => {
-                    normalized.push('*');
-                    sources.push(index);
-                }
-                '÷' => {
-                    normalized.push('/');
-                    sources.push(index);
-                }
-                '−' | '–' | '—' => {
-                    normalized.push('-');
-                    sources.push(index);
-                }
-                '٬' | '،' => {
-                    normalized.push(',');
-                    sources.push(index);
-                }
-                '٫' => {
-                    normalized.push('.');
-                    sources.push(index);
-                }
-                '٪' => {
-                    normalized.push('%');
-                    sources.push(index);
-                }
-                'π' => Self::expanded(&mut normalized, &mut sources, "pi", index),
-                'τ' => Self::expanded(&mut normalized, &mut sources, "tau", index),
-                '∞' => Self::expanded(&mut normalized, &mut sources, "inf", index),
-                '\u{200E}' | '\u{200F}' => {}
-                _ => {
-                    normalized.push(character);
-                    sources.push(index);
-                }
-            }
-        }
-        let trimmed = normalized.trim();
-        let leading = normalized.chars().count() - normalized.trim_start().chars().count();
-        let trailing = normalized.chars().count() - normalized.trim_end().chars().count();
-        sources.drain(..leading);
-        sources.truncate(sources.len().saturating_sub(trailing));
-        Self {
-            text: trimmed.to_string(),
-            offset,
-            sources,
-        }
-    }
-
-    fn expanded(normalized: &mut String, sources: &mut Vec<usize>, text: &str, index: usize) {
-        for _ in text.chars() {
-            sources.push(index);
-        }
-        normalized.push_str(text);
-    }
-
-    fn span(&self, span: std::ops::Range<usize>) -> std::ops::Range<usize> {
-        let start = self.sources.get(span.start).copied().unwrap_or(0);
-        let end = span
-            .end
-            .checked_sub(1)
-            .and_then(|last| self.sources.get(last))
-            .map_or(start, |last| last + 1);
-        (self.offset + start)..(self.offset + end)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.text.is_empty()
-    }
-}
-
-impl std::fmt::Display for Expression {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.text)
-    }
-}
-
-impl AsRef<str> for Expression {
-    fn as_ref(&self) -> &str {
-        &self.text
-    }
-}
-
-#[derive(Debug)]
-enum Statement {
-    Empty,
-    Expression(Expression),
-    Assignment {
-        name: Identifier,
-        span: std::ops::Range<usize>,
-        expression: Expression,
-    },
-    Definition {
-        name: Identifier,
-        span: std::ops::Range<usize>,
-        parameters: Vec<(Identifier, std::ops::Range<usize>)>,
-        expression: Expression,
-    },
-}
-
 pub struct Part {
-    span: std::ops::Range<usize>,
+    span: Span,
     value: Value,
 }
 
 impl Part {
-    pub fn span(&self) -> std::ops::Range<usize> {
+    pub fn span(&self) -> Span {
         self.span.clone()
     }
 
@@ -420,435 +112,6 @@ impl<'a> IntoIterator for &'a Readings {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Symbol(&'static str);
-
-impl Symbol {
-    const PLUS: Self = Self("+");
-    const MINUS: Self = Self("-");
-    const STAR: Self = Self("*");
-    const SLASH: Self = Self("/");
-    const PERCENT: Self = Self("%");
-    const CARET: Self = Self("^");
-    const BANG: Self = Self("!");
-    const EQUAL: Self = Self("==");
-    const NOT_EQUAL: Self = Self("!=");
-    const LESS: Self = Self("<");
-    const GREATER: Self = Self(">");
-    const LESS_OR_EQUAL: Self = Self("<=");
-    const GREATER_OR_EQUAL: Self = Self(">=");
-}
-
-impl std::fmt::Display for Symbol {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0)
-    }
-}
-
-impl TryFrom<char> for Symbol {
-    type Error = Failure;
-
-    fn try_from(character: char) -> Result<Self, Self::Error> {
-        match character {
-            '+' => Ok(Self::PLUS),
-            '-' => Ok(Self::MINUS),
-            '*' => Ok(Self::STAR),
-            '/' => Ok(Self::SLASH),
-            '%' => Ok(Self::PERCENT),
-            '^' => Ok(Self::CARET),
-            '!' => Ok(Self::BANG),
-            '<' => Ok(Self::LESS),
-            '>' => Ok(Self::GREATER),
-            _ => Err(Failure::new(format!("unexpected character {character}"))),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-enum Token {
-    Number(Number),
-    Name(Identifier),
-    Key(Key),
-    Symbol(Symbol),
-    LeftParenthesis,
-    RightParenthesis,
-    Comma,
-}
-
-impl Token {
-    fn starts_value(&self) -> bool {
-        matches!(
-            self,
-            Self::Number(_) | Self::Name(_) | Self::Key(_) | Self::LeftParenthesis
-        )
-    }
-}
-
-impl std::fmt::Display for Token {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Number(number) => write!(formatter, "{}", number.value()),
-            Self::Name(name) => write!(formatter, "{name}"),
-            Self::Key(key) => write!(formatter, "{key}"),
-            Self::Symbol(symbol) => write!(formatter, "{symbol}"),
-            Self::LeftParenthesis => formatter.write_str("("),
-            Self::RightParenthesis => formatter.write_str(")"),
-            Self::Comma => formatter.write_str(","),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Tokens {
-    items: Vec<(Token, std::ops::Range<usize>)>,
-    position: usize,
-}
-
-impl Tokens {
-    fn new(items: Vec<(Token, std::ops::Range<usize>)>) -> Self {
-        Self { items, position: 0 }
-    }
-
-    fn peek(&self) -> Option<&Token> {
-        self.items.get(self.position).map(|(token, _)| token)
-    }
-
-    fn peek_after(&self, offset: usize) -> Option<&Token> {
-        self.items
-            .get(self.position + offset)
-            .map(|(token, _)| token)
-    }
-
-    fn span(&self, index: usize) -> Option<std::ops::Range<usize>> {
-        self.items.get(index).map(|(_, span)| span.clone())
-    }
-
-    fn bump(&mut self) -> Option<Token> {
-        let token = self.peek().cloned();
-        if token.is_some() {
-            self.position += 1;
-        }
-        token
-    }
-
-    fn is_empty(&self) -> bool {
-        self.peek().is_none()
-    }
-
-    fn lazy_arguments(
-        &mut self,
-    ) -> Result<Vec<Vec<(Token, std::ops::Range<usize>)>>, Failure> {
-        let mut arguments = Vec::new();
-        let mut current = Vec::new();
-        let mut depth = 0usize;
-        loop {
-            let item = match self.items.get(self.position).cloned() {
-                Some(item) => item,
-                None => return Err(Failure::new("expected ')'")),
-            };
-            self.position += 1;
-            match &item.0 {
-                Token::LeftParenthesis => {
-                    depth += 1;
-                    current.push(item);
-                }
-                Token::RightParenthesis if depth == 0 => {
-                    if !current.is_empty() || !arguments.is_empty() {
-                        arguments.push(current);
-                    }
-                    return Ok(arguments);
-                }
-                Token::RightParenthesis => {
-                    depth = depth.saturating_sub(1);
-                    current.push(item);
-                }
-                Token::Comma if depth == 0 => arguments.push(std::mem::take(&mut current)),
-                _ => current.push(item),
-            }
-        }
-    }
-}
-
-struct Lexer {
-    characters: Vec<char>,
-    position: usize,
-    depth: usize,
-}
-
-impl Lexer {
-    fn new(expression: &Expression) -> Self {
-        Self {
-            characters: expression.as_ref().chars().collect(),
-            position: 0,
-            depth: 0,
-        }
-    }
-
-    fn tokens(&mut self) -> Result<Tokens, Failure> {
-        let mut items = Vec::new();
-        while let Some(character) = self.peek() {
-            if character.is_whitespace() {
-                self.bump();
-                continue;
-            }
-            let start = self.position;
-            let token = self.token()?;
-            items.push((token, start..self.position));
-        }
-        Ok(Tokens::new(items))
-    }
-
-    fn token(&mut self) -> Result<Token, Failure> {
-        let character = self
-            .peek()
-            .ok_or_else(|| Failure::new("unexpected end of expression"))?;
-        match character {
-            '(' => {
-                self.bump();
-                self.depth += 1;
-                Ok(Token::LeftParenthesis)
-            }
-            ')' => {
-                self.bump();
-                self.depth = self.depth.saturating_sub(1);
-                Ok(Token::RightParenthesis)
-            }
-            ',' => {
-                self.bump();
-                Ok(Token::Comma)
-            }
-            _ if character.is_ascii_digit() => self.number(),
-            _ if character == '.'
-                && self
-                    .peek_after(1)
-                    .is_some_and(|next| next.is_ascii_digit()) =>
-            {
-                self.number()
-            }
-            _ if character.is_ascii_alphabetic() || character == '_' => Ok(self.identifier()),
-            _ => self.symbol(),
-        }
-    }
-
-    fn number(&mut self) -> Result<Token, Failure> {
-        if self.peek() == Some('0') {
-            match self.peek_after(1) {
-                Some('x' | 'X') => {
-                    self.bump();
-                    self.bump();
-                    return self.radix(16);
-                }
-                Some('b' | 'B') => {
-                    self.bump();
-                    self.bump();
-                    return self.radix(2);
-                }
-                _ => {}
-            }
-        }
-        let mut text = String::new();
-        self.digits(10, &mut text);
-        while self.depth == 0 && self.grouped() {
-            self.bump();
-            self.digits(10, &mut text);
-        }
-        if self.peek() == Some('.') {
-            if let Some(character) = self.bump() {
-                text.push(character);
-            }
-            self.digits(10, &mut text);
-        }
-        if matches!(self.peek(), Some('e' | 'E')) {
-            let mut lookahead = 1;
-            let signed = matches!(self.peek_after(1), Some('+' | '-'));
-            if signed {
-                lookahead = 2;
-            }
-            if self
-                .peek_after(lookahead)
-                .is_some_and(|character| character.is_ascii_digit())
-            {
-                if let Some(character) = self.bump() {
-                    text.push(character);
-                }
-                if signed {
-                    if let Some(character) = self.bump() {
-                        text.push(character);
-                    }
-                }
-                self.digits(10, &mut text);
-            }
-        }
-        let number = text
-            .parse::<f64>()
-            .map_err(|_| Failure::new("invalid number"))?;
-        Ok(Token::Number(Number::new(number)))
-    }
-
-    fn grouped(&self) -> bool {
-        self.peek() == Some(',')
-            && (1..=3).all(|offset| {
-                self.peek_after(offset)
-                    .is_some_and(|character| character.is_ascii_digit())
-            })
-            && !self
-                .peek_after(4)
-                .is_some_and(|character| character.is_ascii_digit())
-    }
-
-    fn radix(&mut self, radix: u32) -> Result<Token, Failure> {
-        let mut text = String::new();
-        self.digits(radix, &mut text);
-        if text.is_empty() {
-            return Err(Failure::new("missing digits"));
-        }
-        let number = u128::from_str_radix(&text, radix)
-            .map_err(|_| Failure::new("invalid number"))?;
-        Ok(Token::Number(Number::new(number as f64)))
-    }
-
-    fn digits(&mut self, radix: u32, text: &mut String) {
-        while let Some(character) = self.peek() {
-            if character == '_' {
-                self.bump();
-                continue;
-            }
-            if character.to_digit(radix).is_none() {
-                break;
-            }
-            if let Some(character) = self.bump() {
-                text.push(character);
-            }
-        }
-    }
-
-    fn identifier(&mut self) -> Token {
-        let mut text = String::new();
-        while let Some(character) = self.peek() {
-            if character.is_ascii_alphanumeric() || character == '_' {
-                if let Some(character) = self.bump() {
-                    text.push(character);
-                }
-            } else {
-                break;
-            }
-        }
-        if let Some(key) = Self::key(&text) {
-            return Token::Key(key);
-        }
-        Token::Name(Identifier::new(&text))
-    }
-
-    fn key(text: &str) -> Option<Key> {
-        let modifiers = match text {
-            "Ctrl" => element::Modifiers::CONTROL,
-            "Alt" => element::Modifiers::ALT,
-            "Shift" => element::Modifiers::SHIFT,
-            "Super" => element::Modifiers::SUPER,
-            _ if Self::key_name(text) => {
-                return Some(Key::new(element::Modifiers::NONE, Text::new(text)));
-            }
-            _ => return None,
-        };
-        Some(Key::modifier(modifiers))
-    }
-
-    fn key_name(text: &str) -> bool {
-        let mut characters = text.chars();
-        if characters
-            .next()
-            .is_some_and(|character| character.is_ascii_uppercase())
-            && characters.next().is_none()
-        {
-            return true;
-        }
-        if text
-            .strip_prefix('F')
-            .and_then(|rest| rest.parse::<u8>().ok())
-            .is_some_and(|number| (1..=24).contains(&number))
-        {
-            return true;
-        }
-        matches!(
-            text,
-            "Space"
-                | "Enter"
-                | "Escape"
-                | "Tab"
-                | "Backspace"
-                | "Delete"
-                | "Insert"
-                | "Home"
-                | "End"
-                | "PageUp"
-                | "PageDown"
-                | "Left"
-                | "Right"
-                | "Up"
-                | "Down"
-        )
-    }
-
-    fn symbol(&mut self) -> Result<Token, Failure> {
-        let character = self
-            .bump()
-            .ok_or_else(|| Failure::new("unexpected end of expression"))?;
-        let pair = match (character, self.peek()) {
-            ('*', Some('*')) => Some(Symbol::CARET),
-            ('=', Some('=')) => Some(Symbol::EQUAL),
-            ('!', Some('=')) => Some(Symbol::NOT_EQUAL),
-            ('<', Some('=')) => Some(Symbol::LESS_OR_EQUAL),
-            ('>', Some('=')) => Some(Symbol::GREATER_OR_EQUAL),
-            _ => None,
-        };
-        if let Some(symbol) = pair {
-            self.bump();
-            return Ok(Token::Symbol(symbol));
-        }
-        Ok(Token::Symbol(Symbol::try_from(character)?))
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.characters.get(self.position).copied()
-    }
-
-    fn peek_after(&self, offset: usize) -> Option<char> {
-        self.characters.get(self.position + offset).copied()
-    }
-
-    fn bump(&mut self) -> Option<char> {
-        let character = self.peek();
-        if character.is_some() {
-            self.position += 1;
-        }
-        character
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Precedence(u8);
-
-impl Precedence {
-    const LOWEST: Self = Self(0);
-    const COMPARISON: Self = Self(5);
-    const ADDITION: Self = Self(10);
-    const MULTIPLICATION: Self = Self(20);
-    const PREFIX: Self = Self(25);
-    const POWER: Self = Self(30);
-    const POSTFIX: Self = Self(40);
-
-    fn next(self) -> Self {
-        Self(self.0 + 1)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Associativity {
-    Left,
-    Right,
-    None,
-}
-
 struct Arguments<'a>(&'a [Value]);
 
 impl<'a> Arguments<'a> {
@@ -930,10 +193,7 @@ impl Arity {
     }
 
     fn accepts(self, values: &[Value]) -> bool {
-        values.len() >= self.minimum
-            && self
-                .maximum
-                .is_none_or(|maximum| values.len() <= maximum)
+        values.len() >= self.minimum && self.maximum.is_none_or(|maximum| values.len() <= maximum)
     }
 
     fn counted(count: usize) -> String {
@@ -947,12 +207,7 @@ impl std::fmt::Display for Arity {
             Some(maximum) if maximum == self.minimum => {
                 write!(formatter, "{}", Self::counted(self.minimum))
             }
-            Some(maximum) => write!(
-                formatter,
-                "{} or {}",
-                self.minimum,
-                Self::counted(maximum)
-            ),
+            Some(maximum) => write!(formatter, "{} or {}", self.minimum, Self::counted(maximum)),
             None => write!(formatter, "at least {}", Self::counted(self.minimum)),
         }
     }
@@ -1012,19 +267,13 @@ impl Callable for Addition {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(2))?;
-        if let (Some(left), Some(right)) =
-            (values[0].cast::<Key>(), values[1].cast::<Key>())
-        {
+        if let (Some(left), Some(right)) = (values[0].cast::<Key>(), values[1].cast::<Key>()) {
             return Ok(Value::new(left.combine(right)?));
         }
-        if let (Some(key), Some(number)) =
-            (values[0].cast::<Key>(), values[1].cast::<Number>())
-        {
+        if let (Some(key), Some(number)) = (values[0].cast::<Key>(), values[1].cast::<Number>()) {
             return Self::digit(key, number);
         }
-        if let (Some(number), Some(key)) =
-            (values[0].cast::<Number>(), values[1].cast::<Key>())
-        {
+        if let (Some(number), Some(key)) = (values[0].cast::<Number>(), values[1].cast::<Key>()) {
             return Self::digit(key, number);
         }
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
@@ -1162,7 +411,9 @@ impl Callable for Percentage {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
-        Ok(Value::new(Number::new(arguments.number(0)?.value() / 100.0)))
+        Ok(Value::new(Number::new(
+            arguments.number(0)?.value() / 100.0,
+        )))
     }
 }
 
@@ -1217,14 +468,14 @@ struct Comparison {
     compare: fn(f64, f64) -> bool,
 }
 
-const COMPARISONS: [(Symbol, &str, fn(f64, f64) -> bool); 4] = [
-    (Symbol::LESS, "less", |left, right| left < right),
-    (Symbol::GREATER, "greater", |left, right| left > right),
-    (Symbol::LESS_OR_EQUAL, "less_or_equal", |left, right| {
+const COMPARISONS: [(Glyph, &str, fn(f64, f64) -> bool); 4] = [
+    (Glyph::LESS, "less", |left, right| left < right),
+    (Glyph::GREATER, "greater", |left, right| left > right),
+    (Glyph::LESS_OR_EQUAL, "less_or_equal", |left, right| {
         left <= right
     }),
     (
-        Symbol::GREATER_OR_EQUAL,
+        Glyph::GREATER_OR_EQUAL,
         "greater_or_equal",
         |left, right| left >= right,
     ),
@@ -1305,34 +556,6 @@ impl Callable for Conditional {
             .cast::<Function>()
             .ok_or_else(|| Failure::new("if requires expressions"))?;
         branch.call(&[])
-    }
-}
-
-struct Deferred {
-    tokens: Vec<(Token, std::ops::Range<usize>)>,
-    variables: std::rc::Rc<std::cell::RefCell<Variables>>,
-    language: std::rc::Rc<Language>,
-    depth: std::rc::Rc<std::cell::Cell<usize>>,
-}
-
-impl Callable for Deferred {
-    fn name(&self) -> Text {
-        Text::new("expression")
-    }
-
-    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        Arguments::new(values).expect(&self.name(), Arity::exactly(0))?;
-        let session = Session {
-            variables: std::rc::Rc::clone(&self.variables),
-            language: std::rc::Rc::clone(&self.language),
-            depth: std::rc::Rc::clone(&self.depth),
-        };
-        Parser::new(
-            Tokens::new(self.tokens.clone()),
-            &session.language.operators,
-            &session,
-        )
-        .value()
     }
 }
 
@@ -1502,9 +725,7 @@ impl Callable for SquareRoot {
         arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value < 0.0 {
-            return Err(Failure::new(
-                "square root requires a non-negative number",
-            ));
+            return Err(Failure::new("square root requires a non-negative number"));
         }
         Ok(Value::new(Number::new(value.sqrt())))
     }
@@ -1575,9 +796,7 @@ impl Callable for Logarithm {
         } else {
             let base = arguments.number(1)?.value();
             if base <= 0.0 || base == 1.0 {
-                return Err(Failure::new(
-                    "logarithm base must be positive and not one",
-                ));
+                return Err(Failure::new("logarithm base must be positive and not one"));
             }
             value.log(base)
         };
@@ -1645,7 +864,9 @@ impl Callable for Floor {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
-        Ok(Value::new(Number::new(arguments.number(0)?.value().floor())))
+        Ok(Value::new(Number::new(
+            arguments.number(0)?.value().floor(),
+        )))
     }
 }
 
@@ -1698,7 +919,9 @@ impl Callable for Truncate {
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(1))?;
-        Ok(Value::new(Number::new(arguments.number(0)?.value().trunc())))
+        Ok(Value::new(Number::new(
+            arguments.number(0)?.value().trunc(),
+        )))
     }
 }
 
@@ -1767,16 +990,14 @@ impl Callable for Hypotenuse {
         let arguments = Arguments::new(values);
         arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
-        Ok(Value::new(Number::new(
-            left.value().hypot(right.value()),
-        )))
+        Ok(Value::new(Number::new(left.value().hypot(right.value()))))
     }
 }
 
 struct Operators {
-    prefixes: std::collections::HashMap<Symbol, Operator>,
-    infixes: std::collections::HashMap<Symbol, Operator>,
-    postfixes: std::collections::HashMap<Symbol, Operator>,
+    prefixes: std::collections::HashMap<Glyph, Operator>,
+    infixes: std::collections::HashMap<Glyph, Operator>,
+    postfixes: std::collections::HashMap<Glyph, Operator>,
 }
 
 impl Operators {
@@ -1784,24 +1005,24 @@ impl Operators {
         use std::collections::HashMap;
         let mut prefixes = HashMap::new();
         prefixes.insert(
-            Symbol::PLUS,
+            Glyph::PLUS,
             Operator::new(Positive, Precedence::PREFIX, Associativity::None),
         );
         prefixes.insert(
-            Symbol::MINUS,
+            Glyph::MINUS,
             Operator::new(Negation, Precedence::PREFIX, Associativity::None),
         );
         let mut infixes = HashMap::new();
         infixes.insert(
-            Symbol::PLUS,
+            Glyph::PLUS,
             Operator::new(Addition, Precedence::ADDITION, Associativity::Left),
         );
         infixes.insert(
-            Symbol::MINUS,
+            Glyph::MINUS,
             Operator::new(Subtraction, Precedence::ADDITION, Associativity::Left),
         );
         infixes.insert(
-            Symbol::STAR,
+            Glyph::STAR,
             Operator::new(
                 Multiplication,
                 Precedence::MULTIPLICATION,
@@ -1809,15 +1030,15 @@ impl Operators {
             ),
         );
         infixes.insert(
-            Symbol::SLASH,
+            Glyph::SLASH,
             Operator::new(Division, Precedence::MULTIPLICATION, Associativity::Left),
         );
         infixes.insert(
-            Symbol::PERCENT,
+            Glyph::PERCENT,
             Operator::new(Modulo, Precedence::MULTIPLICATION, Associativity::Left),
         );
         infixes.insert(
-            Symbol::CARET,
+            Glyph::CARET,
             Operator::new(Power, Precedence::POWER, Associativity::Right),
         );
         for (symbol, name, compare) in COMPARISONS {
@@ -1831,20 +1052,20 @@ impl Operators {
             );
         }
         infixes.insert(
-            Symbol::EQUAL,
+            Glyph::EQUAL,
             Operator::new(Equality, Precedence::COMPARISON, Associativity::Left),
         );
         infixes.insert(
-            Symbol::NOT_EQUAL,
+            Glyph::NOT_EQUAL,
             Operator::new(Inequality, Precedence::COMPARISON, Associativity::Left),
         );
         let mut postfixes = HashMap::new();
         postfixes.insert(
-            Symbol::BANG,
+            Glyph::BANG,
             Operator::new(Factorial, Precedence::POSTFIX, Associativity::None),
         );
         postfixes.insert(
-            Symbol::PERCENT,
+            Glyph::PERCENT,
             Operator::new(Percentage, Precedence::POSTFIX, Associativity::None),
         );
         Self {
@@ -1854,23 +1075,19 @@ impl Operators {
         }
     }
 
-    fn prefix(&self, symbol: &Symbol) -> Option<&Operator> {
+    fn prefix(&self, symbol: &Glyph) -> Option<&Operator> {
         self.prefixes.get(symbol)
     }
 
-    fn infix(&self, symbol: &Symbol) -> Option<&Operator> {
+    fn infix(&self, symbol: &Glyph) -> Option<&Operator> {
         self.infixes.get(symbol)
     }
 
-    fn postfix(&self, symbol: &Symbol) -> Option<&Operator> {
+    fn postfix(&self, symbol: &Glyph) -> Option<&Operator> {
         self.postfixes.get(symbol)
     }
 
-    fn multiplication(&self) -> Option<&Operator> {
-        self.infix(&Symbol::STAR)
-    }
-
-    fn value(&self, symbol: &Symbol) -> Option<Value> {
+    fn value(&self, symbol: &Glyph) -> Option<Value> {
         self.infix(symbol)
             .or_else(|| self.prefix(symbol))
             .or_else(|| self.postfix(symbol))
@@ -1962,8 +1179,14 @@ impl Functions {
             Identifier::new("percentage"),
             Value::new(Function::new(Percentage)),
         );
-        entries.insert(Identifier::new("not"), Value::new(Function::new(LogicalNot)));
-        entries.insert(Identifier::new("and"), Value::new(Function::new(LogicalAnd)));
+        entries.insert(
+            Identifier::new("not"),
+            Value::new(Function::new(LogicalNot)),
+        );
+        entries.insert(
+            Identifier::new("and"),
+            Value::new(Function::new(LogicalAnd)),
+        );
         entries.insert(Identifier::new("or"), Value::new(Function::new(LogicalOr)));
         entries.insert(
             Identifier::new("equal"),
@@ -1983,22 +1206,10 @@ impl Functions {
                 Value::new(Function::new(Comparison { name, compare })),
             );
         }
-        entries.insert(
-            Identifier::new("sin"),
-            Value::new(Function::new(Sine)),
-        );
-        entries.insert(
-            Identifier::new("cos"),
-            Value::new(Function::new(Cosine)),
-        );
-        entries.insert(
-            Identifier::new("tan"),
-            Value::new(Function::new(Tangent)),
-        );
-        entries.insert(
-            Identifier::new("asin"),
-            Value::new(Function::new(Arcsine)),
-        );
+        entries.insert(Identifier::new("sin"), Value::new(Function::new(Sine)));
+        entries.insert(Identifier::new("cos"), Value::new(Function::new(Cosine)));
+        entries.insert(Identifier::new("tan"), Value::new(Function::new(Tangent)));
+        entries.insert(Identifier::new("asin"), Value::new(Function::new(Arcsine)));
         entries.insert(
             Identifier::new("acos"),
             Value::new(Function::new(Arccosine)),
@@ -2027,22 +1238,13 @@ impl Functions {
             Identifier::new("sqrt"),
             Value::new(Function::new(SquareRoot)),
         );
-        entries.insert(
-            Identifier::new("cbrt"),
-            Value::new(Function::new(CubeRoot)),
-        );
-        entries.insert(
-            Identifier::new("abs"),
-            Value::new(Function::new(Absolute)),
-        );
+        entries.insert(Identifier::new("cbrt"), Value::new(Function::new(CubeRoot)));
+        entries.insert(Identifier::new("abs"), Value::new(Function::new(Absolute)));
         entries.insert(
             Identifier::new("ln"),
             Value::new(Function::new(NaturalLogarithm)),
         );
-        entries.insert(
-            Identifier::new("log"),
-            Value::new(Function::new(Logarithm)),
-        );
+        entries.insert(Identifier::new("log"), Value::new(Function::new(Logarithm)));
         entries.insert(
             Identifier::new("log2"),
             Value::new(Function::new(BinaryLogarithm)),
@@ -2056,24 +1258,15 @@ impl Functions {
             Value::new(Function::new(Exponential)),
         );
         entries.insert(Identifier::new("floor"), Value::new(Function::new(Floor)));
-        entries.insert(
-            Identifier::new("ceil"),
-            Value::new(Function::new(Ceiling)),
-        );
+        entries.insert(Identifier::new("ceil"), Value::new(Function::new(Ceiling)));
         entries.insert(Identifier::new("round"), Value::new(Function::new(Round)));
         entries.insert(
             Identifier::new("trunc"),
             Value::new(Function::new(Truncate)),
         );
         entries.insert(Identifier::new("sign"), Value::new(Function::new(Sign)));
-        entries.insert(
-            Identifier::new("min"),
-            Value::new(Function::new(Minimum)),
-        );
-        entries.insert(
-            Identifier::new("max"),
-            Value::new(Function::new(Maximum)),
-        );
+        entries.insert(Identifier::new("min"), Value::new(Function::new(Minimum)));
+        entries.insert(Identifier::new("max"), Value::new(Function::new(Maximum)));
         entries.insert(
             Identifier::new("hypot"),
             Value::new(Function::new(Hypotenuse)),
@@ -2235,16 +1428,16 @@ impl Parameter {
     }
 }
 
-struct Defined {
+struct Symbol {
     name: Identifier,
     parameters: Vec<Identifier>,
-    body: Expression,
+    body: Shape,
     scope: std::rc::Weak<std::cell::RefCell<Variables>>,
     language: std::rc::Rc<Language>,
     depth: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
-impl Defined {
+impl Symbol {
     fn evaluate(&self, values: &[Value]) -> Result<Value, Failure> {
         let scope = self
             .scope
@@ -2262,13 +1455,11 @@ impl Defined {
             language: std::rc::Rc::clone(&self.language),
             depth: std::rc::Rc::clone(&self.depth),
         };
-        let mut lexer = Lexer::new(&self.body);
-        let tokens = lexer.tokens()?;
-        Parser::new(tokens, &session.language.operators, &session).value()
+        Evaluator::new(&session).value(&self.body)
     }
 }
 
-impl Callable for Defined {
+impl Callable for Symbol {
     fn name(&self) -> Text {
         Text::new(self.name.to_string())
     }
@@ -2287,253 +1478,197 @@ impl Callable for Defined {
     }
 }
 
-struct Parser<'a> {
-    tokens: Tokens,
-    operators: &'a Operators,
+struct Thunk {
+    shape: std::rc::Rc<Shape>,
+    variables: std::rc::Rc<std::cell::RefCell<Variables>>,
+    language: std::rc::Rc<Language>,
+    depth: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl Callable for Thunk {
+    fn name(&self) -> Text {
+        Text::new("expression")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        Arguments::new(values).expect(&self.name(), Arity::exactly(0))?;
+        let session = Session {
+            variables: std::rc::Rc::clone(&self.variables),
+            language: std::rc::Rc::clone(&self.language),
+            depth: std::rc::Rc::clone(&self.depth),
+        };
+        Evaluator::new(&session).value(&self.shape)
+    }
+}
+
+impl Grammar for Operators {
+    fn fixity(&self, glyph: Glyph) -> Fixity {
+        Fixity::new(
+            self.prefixes
+                .get(&glyph)
+                .map(|operator| operator.precedence),
+            self.infixes
+                .get(&glyph)
+                .map(|operator| (operator.precedence, operator.associativity)),
+            self.postfixes
+                .get(&glyph)
+                .map(|operator| operator.precedence),
+        )
+    }
+}
+
+struct Evaluator<'a> {
     session: &'a Session,
-    expression: Option<&'a Expression>,
     parts: Option<&'a mut Vec<Part>>,
 }
 
-impl<'a> Parser<'a> {
-    fn new(tokens: Tokens, operators: &'a Operators, session: &'a Session) -> Self {
+impl<'a> Evaluator<'a> {
+    fn new(session: &'a Session) -> Self {
         Self {
-            tokens,
-            operators,
             session,
-            expression: None,
             parts: None,
         }
     }
 
-    fn reading(mut self, expression: &'a Expression, parts: &'a mut Vec<Part>) -> Self {
-        self.expression = Some(expression);
-        self.parts = Some(parts);
-        self
+    fn build(session: &'a Session, parts: &'a mut Vec<Part>) -> Self {
+        Self {
+            session,
+            parts: Some(parts),
+        }
     }
 
-    fn record(&mut self, index: usize, value: &Value) {
-        let expression = match self.expression {
-            Some(expression) => expression,
-            None => return,
+    fn value(&mut self, shape: &Shape) -> Result<Value, Failure> {
+        let result = self.evaluate(shape);
+        if Self::is_leaf(shape) {
+            let recorded = match &result {
+                Ok(value) => Some(value.clone()),
+                Err(failure) if matches!(shape.kind(), ShapeKind::Name(_)) => {
+                    Some(Value::new(Failure::new(failure.to_string())))
+                }
+                Err(_) => None,
+            };
+            if let Some(value) = recorded {
+                self.record(shape, value);
+            }
+        }
+        result
+    }
+
+    fn is_leaf(shape: &Shape) -> bool {
+        matches!(
+            shape.kind(),
+            ShapeKind::Number(_) | ShapeKind::Key(_) | ShapeKind::Name(_) | ShapeKind::Glyph(_)
+        )
+    }
+
+    fn evaluate(&mut self, shape: &Shape) -> Result<Value, Failure> {
+        match shape.kind() {
+            ShapeKind::Number(number) => Ok(Value::new(*number)),
+            ShapeKind::Key(key) => Ok(Value::new(key.clone())),
+            ShapeKind::Name(name) => self.session.lookup(name),
+            ShapeKind::Glyph(glyph) => self
+                .session
+                .language
+                .operators
+                .value(glyph)
+                .ok_or_else(|| Failure::new(format!("unexpected symbol {glyph}"))),
+            ShapeKind::Unary { operator, operand } => {
+                let function = self.operator(operator, Operators::prefix)?;
+                let value = self.value(operand)?;
+                function.call(&[value])
+            }
+            ShapeKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let left = self.value(left)?;
+                let function = self.operator(operator, Operators::infix)?;
+                let right = self.value(right)?;
+                function.call(&[left, right])
+            }
+            ShapeKind::Postfix { operator, operand } => {
+                let value = self.value(operand)?;
+                let function = self.operator(operator, Operators::postfix)?;
+                function.call(&[value])
+            }
+            ShapeKind::Multiplication {
+                operator,
+                left,
+                right,
+            } => {
+                let function = self
+                    .session
+                    .language
+                    .operators
+                    .infix(operator)
+                    .map(|operator| operator.function.clone())
+                    .ok_or_else(|| Failure::new(format!("unexpected symbol {operator}")))?;
+                let left = self.value(left)?;
+                let right = self.value(right)?;
+                function.call(&[left, right])
+            }
+            ShapeKind::Call {
+                function,
+                arguments,
+            } => {
+                let name = match function.kind() {
+                    ShapeKind::Name(name) => name.to_string(),
+                    _ => String::from("expression"),
+                };
+                let value = self.value(function)?;
+                let callable = value
+                    .cast::<Function>()
+                    .cloned()
+                    .ok_or_else(|| Failure::new(format!("{name} is not a function")))?;
+                let values = if callable.lazy() {
+                    arguments
+                        .iter()
+                        .map(|argument| Value::new(Function::new(self.thunk(argument))))
+                        .collect()
+                } else {
+                    let mut values = Vec::with_capacity(arguments.len());
+                    for argument in arguments {
+                        values.push(self.value(argument)?);
+                    }
+                    values
+                };
+                callable.call(&values)
+            }
+        }
+    }
+
+    fn operator(
+        &mut self,
+        shape: &Shape,
+        select: for<'b> fn(&'b Operators, &Glyph) -> Option<&'b Operator>,
+    ) -> Result<Function, Failure> {
+        let glyph = match shape.kind() {
+            ShapeKind::Glyph(glyph) => glyph,
+            _ => return Err(Failure::new("unexpected operator")),
         };
-        let parts = match self.parts.as_mut() {
-            Some(parts) => parts,
-            None => return,
-        };
-        if let Some(span) = self.tokens.span(index) {
+        let function = select(&self.session.language.operators, &glyph)
+            .map(|operator| operator.function.clone())
+            .ok_or_else(|| Failure::new(format!("unexpected symbol {glyph}")))?;
+        self.record(shape, Value::new(function.clone()));
+        Ok(function)
+    }
+
+    fn record(&mut self, shape: &Shape, value: Value) {
+        if let Some(parts) = self.parts.as_deref_mut() {
             parts.push(Part {
-                span: expression.span(span),
-                value: value.clone(),
+                span: shape.span(),
+                value,
             });
         }
     }
 
-    fn value(&mut self) -> Result<Value, Failure> {
-        let value = self.expression(Precedence::LOWEST)?;
-        if self.tokens.is_empty() {
-            return Ok(value);
-        }
-        let token = self
-            .tokens
-            .peek()
-            .ok_or_else(|| Failure::new("unexpected end of expression"))?;
-        Err(Failure::new(format!("unexpected {token}")))
-    }
-
-    fn expression(&mut self, minimum: Precedence) -> Result<Value, Failure> {
-        let mut left = self.prefix()?;
-        loop {
-            let token = match self.tokens.peek() {
-                Some(token) => token.clone(),
-                None => break,
-            };
-            let index = self.tokens.position;
-            if let Token::Symbol(symbol) = &token {
-                let percentage_remainder = *symbol == Symbol::PERCENT
-                    && self.tokens.peek_after(1).is_some_and(Token::starts_value);
-                if !percentage_remainder {
-                    if let Some(operator) = self.operators.postfix(symbol) {
-                        let precedence = operator.precedence;
-                        let function = operator.function.clone();
-                        if precedence >= minimum {
-                            self.tokens.bump();
-                            self.record(index, &Value::new(function.clone()));
-                            left = function.call(&[left])?;
-                            continue;
-                        }
-                    }
-                }
-                if let Some(operator) = self.operators.infix(symbol) {
-                    let precedence = operator.precedence;
-                    let associativity = operator.associativity;
-                    let function = operator.function.clone();
-                    if precedence < minimum {
-                        break;
-                    }
-                    self.tokens.bump();
-                    self.record(index, &Value::new(function.clone()));
-                    let next_minimum = match associativity {
-                        Associativity::Right => precedence,
-                        _ => precedence.next(),
-                    };
-                    let right = self.expression(next_minimum)?;
-                    left = function.call(&[left, right])?;
-                    continue;
-                }
-            }
-            if token.starts_value() {
-                let (precedence, function) = match self.operators.multiplication() {
-                    Some(operator) => (operator.precedence, operator.function.clone()),
-                    None => break,
-                };
-                if precedence < minimum {
-                    break;
-                }
-                let right = self.expression(precedence.next())?;
-                left = function.call(&[left, right])?;
-                continue;
-            }
-            break;
-        }
-        Ok(left)
-    }
-
-    fn prefix(&mut self) -> Result<Value, Failure> {
-        let index = self.tokens.position;
-        let token = self
-            .tokens
-            .bump()
-            .ok_or_else(|| Failure::new("unexpected end of expression"))?;
-        match token {
-            Token::Number(number) => {
-                let value = Value::new(number);
-                self.record(index, &value);
-                Ok(value)
-            }
-            Token::Key(key) => {
-                let value = Value::new(key);
-                self.record(index, &value);
-                Ok(value)
-            }
-            Token::Name(name) => self.name(index, name),
-            Token::LeftParenthesis => {
-                let value = self.expression(Precedence::LOWEST)?;
-                self.expect_right_parenthesis()?;
-                Ok(value)
-            }
-            Token::Symbol(symbol) => {
-                if self.prefix_applies() {
-                    if let Some(operator) = self.operators.prefix(&symbol) {
-                        let precedence = operator.precedence;
-                        let function = operator.function.clone();
-                        self.record(index, &Value::new(function.clone()));
-                        let value = self.expression(precedence)?;
-                        return function.call(&[value]);
-                    }
-                }
-                let value = self
-                    .operators
-                    .value(&symbol)
-                    .ok_or_else(|| Failure::new(format!("unexpected symbol {symbol}")))?;
-                self.record(index, &value);
-                Ok(value)
-            }
-            other => Err(Failure::new(format!("unexpected {other}"))),
-        }
-    }
-
-    fn prefix_applies(&self) -> bool {
-        match self.tokens.peek() {
-            Some(token) => {
-                token.starts_value()
-                    || matches!(token, Token::Symbol(symbol) if self.operators.prefix(symbol).is_some())
-            }
-            None => false,
-        }
-    }
-
-    fn name(&mut self, index: usize, name: Identifier) -> Result<Value, Failure> {
-        if matches!(self.tokens.peek(), Some(Token::LeftParenthesis)) {
-            self.tokens.bump();
-            let value = match self.session.lookup(&name) {
-                Ok(value) => value,
-                Err(failure) => {
-                    self.record(index, &Value::new(Failure::new(failure.to_string())));
-                    return Err(failure);
-                }
-            };
-            self.record(index, &value);
-            let function = value
-                .cast::<Function>()
-                .ok_or_else(|| Failure::new(format!("{name} is not a function")))?;
-            let arguments = if function.lazy() {
-                self.lazy_arguments()?
-            } else {
-                self.arguments()?
-            };
-            return function.call(&arguments);
-        }
-        match self.session.lookup(&name) {
-            Ok(value) => {
-                self.record(index, &value);
-                Ok(value)
-            }
-            Err(failure) => {
-                self.record(index, &Value::new(Failure::new(failure.to_string())));
-                Err(failure)
-            }
-        }
-    }
-
-    fn lazy_arguments(&mut self) -> Result<Vec<Value>, Failure> {
-        let arguments = self.tokens.lazy_arguments()?;
-        Ok(arguments
-            .into_iter()
-            .map(|tokens| {
-                Value::new(Function::new(Deferred {
-                    tokens,
-                    variables: std::rc::Rc::clone(&self.session.variables),
-                    language: std::rc::Rc::clone(&self.session.language),
-                    depth: std::rc::Rc::clone(&self.session.depth),
-                }))
-            })
-            .collect())
-    }
-
-    fn arguments(&mut self) -> Result<Vec<Value>, Failure> {
-        if matches!(self.tokens.peek(), Some(Token::RightParenthesis)) {
-            self.tokens.bump();
-            return Ok(Vec::new());
-        }
-        let mut values = Vec::new();
-        loop {
-            values.push(self.expression(Precedence::LOWEST)?);
-            let token = self.tokens.peek().cloned();
-            match token {
-                Some(Token::Comma) => {
-                    self.tokens.bump();
-                }
-                Some(Token::RightParenthesis) => {
-                    self.tokens.bump();
-                    break;
-                }
-                Some(token) => {
-                    return Err(Failure::new(format!(
-                        "expected ',' or ')', found {token}"
-                    )))
-                }
-                None => return Err(Failure::new("expected ',' or ')'")),
-            }
-        }
-        Ok(values)
-    }
-
-    fn expect_right_parenthesis(&mut self) -> Result<(), Failure> {
-        match self.tokens.bump() {
-            Some(Token::RightParenthesis) => Ok(()),
-            Some(token) => Err(Failure::new(format!("expected ')', found {token}"))),
-            None => Err(Failure::new("expected ')'")),
+    fn thunk(&self, shape: &Shape) -> Thunk {
+        Thunk {
+            shape: std::rc::Rc::new(shape.clone()),
+            variables: std::rc::Rc::clone(&self.session.variables),
+            language: std::rc::Rc::clone(&self.session.language),
+            depth: std::rc::Rc::clone(&self.session.depth),
         }
     }
 }
@@ -2561,7 +1696,11 @@ impl Calculator {
         }
         let session = Session::new(std::rc::Rc::new(language));
         let mut readings = Vec::with_capacity(source.line_count());
-        readings.extend(source.lines().map(|line| self.evaluate_line(line, &session)));
+        readings.extend(
+            source
+                .lines()
+                .map(|line| self.evaluate_line(line, &session)),
+        );
         Readings::new(readings, session.names())
     }
 
@@ -2575,7 +1714,11 @@ impl Calculator {
                 }
                 reading
             }
-            Ok(Statement::Assignment { name, span, expression }) => {
+            Ok(Statement::Assignment {
+                name,
+                span,
+                expression,
+            }) => {
                 let mut reading = self.evaluate_expression(&expression, session);
                 if reading.value().cast::<Failure>().is_none() {
                     match session.assign(name, reading.value().clone()) {
@@ -2595,6 +1738,10 @@ impl Calculator {
                 parameters,
                 expression,
             }) => {
+                let body = match self.parse(&expression, session) {
+                    Ok(body) => body,
+                    Err(failure) => return Reading::without_parts(Value::new(failure)),
+                };
                 let mut names = Vec::with_capacity(parameters.len());
                 let mut parts = Vec::with_capacity(parameters.len() + 1);
                 for (parameter, span) in parameters {
@@ -2604,10 +1751,10 @@ impl Calculator {
                         value: Value::new(Parameter::new(&parameter)),
                     });
                 }
-                let function = Value::new(Function::new(Defined {
+                let function = Value::new(Function::new(Symbol {
                     name: name.clone(),
                     parameters: names,
-                    body: expression,
+                    body,
                     scope: std::rc::Rc::downgrade(&session.variables),
                     language: std::rc::Rc::clone(&session.language),
                     depth: std::rc::Rc::clone(&session.depth),
@@ -2631,15 +1778,17 @@ impl Calculator {
         }
     }
 
+    fn parse(&self, expression: &Expression, session: &Session) -> Result<Shape, Failure> {
+        let mut lexer = Lexer::new(expression);
+        let tokens = lexer.tokens()?;
+        Parser::new(tokens, &session.language.operators, expression).shape()
+    }
+
     fn evaluate_expression(&self, expression: &Expression, session: &Session) -> Reading {
         let mut parts = Vec::new();
-        let mut lexer = Lexer::new(expression);
-        let result = match lexer.tokens() {
-            Ok(tokens) => Parser::new(tokens, &session.language.operators, session)
-                .reading(expression, &mut parts)
-                .value(),
-            Err(failure) => Err(failure),
-        };
+        let result = self
+            .parse(expression, session)
+            .and_then(|shape| Evaluator::build(session, &mut parts).value(&shape));
         let value = match result {
             Ok(value)
                 if value

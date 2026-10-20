@@ -591,6 +591,7 @@ impl eframe::App for Application {
                                 .word_boundary(|character| {
                                     !(character.is_ascii_alphanumeric() || character == '_')
                                 })
+                                .align(egui::RectAlign::BOTTOM_START)
                                 .max_height(96.0)
                                 .show(
                                     ui,

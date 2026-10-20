@@ -28,7 +28,7 @@ impl Calculator {
 
 impl crate::station::Station for Calculator {
     fn show(&mut self, ui: &mut eframe::egui::Ui) {
-        use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense};
+        use eframe::egui::{self, Color32, FontId, Rect, Sense};
         let context = ui.ctx().clone();
         let engine = &self.engine;
         let source = &mut self.source;
@@ -136,12 +136,13 @@ impl crate::station::Station for Calculator {
                     } else {
                         font.clone()
                     };
-                    painter.text(
-                        egui::pos2(gutter_right - 4.0, top + placed.row.size.y / 2.0),
-                        Align2::RIGHT_CENTER,
-                        text,
-                        text_font,
-                        shown.color,
+                    let line = crate::typography::Line::new(ui, &text, shown.color, &text_font);
+                    line.paint(
+                        &painter,
+                        egui::pos2(
+                            gutter_right - 4.0 - line.size().x,
+                            top + (placed.row.size.y - line.size().y) / 2.0,
+                        ),
                     );
                 }
                 let hovered = context.pointer_hover_pos().and_then(|position| {

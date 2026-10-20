@@ -13,6 +13,7 @@ mod shortcut;
 mod station;
 mod surface;
 mod tray;
+mod typography;
 mod update;
 
 fn main() -> eframe::Result {

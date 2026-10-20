@@ -13,6 +13,7 @@ element.workspace = true
 evaluator.workspace = true
 global-hotkey = "0.9"
 self_update = { version = "1.3", default-features = false, features = ["reqwest", "rustls", "github", "archive-tar", "compression-tar-gz", "archive-zip", "compression-zip-deflate"] }
+unicode-bidi = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"

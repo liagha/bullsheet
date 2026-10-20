@@ -1,14 +1,11 @@
-pub(crate) struct Instance {
+pub struct Instance {
     file: std::fs::File,
 }
 
 impl Instance {
-    pub(crate) fn new() -> std::io::Result<Option<Self>> {
+    pub fn new() -> std::io::Result<Option<Self>> {
         let base = directories::BaseDirs::new().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no home directory",
-            )
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory")
         })?;
         let directory = base.data_dir().join("bullsheet");
         std::fs::create_dir_all(&directory)?;

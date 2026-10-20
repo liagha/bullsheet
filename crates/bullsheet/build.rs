@@ -6,8 +6,7 @@ fn main() -> std::io::Result<()> {
     resource.set("FileDescription", "bullsheet");
     resource.compile()?;
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu") {
-        let directory = std::env::var("OUT_DIR")
-            .map_err(std::io::Error::other)?;
+        let directory = std::env::var("OUT_DIR").map_err(std::io::Error::other)?;
         println!("cargo:rustc-link-arg={directory}/resource.o");
     }
     Ok(())

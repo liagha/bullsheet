@@ -1,4 +1,4 @@
-pub(crate) struct Autostart {
+pub struct Autostart {
     executable: std::path::PathBuf,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     entry: std::path::PathBuf,
@@ -12,17 +12,16 @@ const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
 #[cfg(target_os = "windows")]
 impl Autostart {
-    pub(crate) fn new() -> std::io::Result<Self> {
+    pub fn new() -> std::io::Result<Self> {
         Ok(Self {
             executable: std::env::current_exe()?,
         })
     }
 
-    pub(crate) fn enabled(&self) -> bool {
+    pub fn enabled(&self) -> bool {
         use windows_sys::Win32::Foundation::ERROR_SUCCESS;
         use windows_sys::Win32::System::Registry::{
-            HKEY_CURRENT_USER, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW,
-            RegQueryValueExW,
+            HKEY_CURRENT_USER, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
         };
         let subkey = Self::wide(RUN_KEY);
         let value = Self::wide(AUTOSTART_VALUE);
@@ -56,11 +55,10 @@ impl Autostart {
         status == ERROR_SUCCESS
     }
 
-    pub(crate) fn enable(&self) -> std::io::Result<()> {
+    pub fn enable(&self) -> std::io::Result<()> {
         use windows_sys::Win32::Foundation::ERROR_SUCCESS;
         use windows_sys::Win32::System::Registry::{
-            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ, RegCloseKey, RegOpenKeyExW,
-            RegSetValueExW,
+            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ, RegCloseKey, RegOpenKeyExW, RegSetValueExW,
         };
         let subkey = Self::wide(RUN_KEY);
         let value = Self::wide(AUTOSTART_VALUE);
@@ -98,13 +96,10 @@ impl Autostart {
         Ok(())
     }
 
-    pub(crate) fn disable(&self) -> std::io::Result<()> {
-        use windows_sys::Win32::Foundation::{
-            ERROR_FILE_NOT_FOUND, ERROR_SUCCESS,
-        };
+    pub fn disable(&self) -> std::io::Result<()> {
+        use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
         use windows_sys::Win32::System::Registry::{
-            HKEY_CURRENT_USER, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW,
-            RegOpenKeyExW,
+            HKEY_CURRENT_USER, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
         };
         let subkey = Self::wide(RUN_KEY);
         let value = Self::wide(AUTOSTART_VALUE);
@@ -143,12 +138,9 @@ impl Autostart {
 
 #[cfg(target_os = "linux")]
 impl Autostart {
-    pub(crate) fn new() -> std::io::Result<Self> {
+    pub fn new() -> std::io::Result<Self> {
         let base = directories::BaseDirs::new().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no home directory",
-            )
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory")
         })?;
         Ok(Self {
             executable: std::env::current_exe()?,
@@ -159,11 +151,11 @@ impl Autostart {
         })
     }
 
-    pub(crate) fn enabled(&self) -> bool {
+    pub fn enabled(&self) -> bool {
         self.entry.exists()
     }
 
-    pub(crate) fn enable(&self) -> std::io::Result<()> {
+    pub fn enable(&self) -> std::io::Result<()> {
         if let Some(directory) = self.entry.parent() {
             std::fs::create_dir_all(directory)?;
         }
@@ -174,14 +166,10 @@ impl Autostart {
         std::fs::write(&self.entry, contents)
     }
 
-    pub(crate) fn disable(&self) -> std::io::Result<()> {
+    pub fn disable(&self) -> std::io::Result<()> {
         match std::fs::remove_file(&self.entry) {
             Ok(()) => Ok(()),
-            Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound =>
-            {
-                Ok(())
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
         }
     }
@@ -189,12 +177,9 @@ impl Autostart {
 
 #[cfg(target_os = "macos")]
 impl Autostart {
-    pub(crate) fn new() -> std::io::Result<Self> {
+    pub fn new() -> std::io::Result<Self> {
         let base = directories::BaseDirs::new().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no home directory",
-            )
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory")
         })?;
         Ok(Self {
             executable: std::env::current_exe()?,
@@ -206,11 +191,11 @@ impl Autostart {
         })
     }
 
-    pub(crate) fn enabled(&self) -> bool {
+    pub fn enabled(&self) -> bool {
         self.entry.exists()
     }
 
-    pub(crate) fn enable(&self) -> std::io::Result<()> {
+    pub fn enable(&self) -> std::io::Result<()> {
         if let Some(directory) = self.entry.parent() {
             std::fs::create_dir_all(directory)?;
         }
@@ -228,14 +213,10 @@ impl Autostart {
         std::fs::write(&self.entry, contents)
     }
 
-    pub(crate) fn disable(&self) -> std::io::Result<()> {
+    pub fn disable(&self) -> std::io::Result<()> {
         match std::fs::remove_file(&self.entry) {
             Ok(()) => Ok(()),
-            Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound =>
-            {
-                Ok(())
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
         }
     }

@@ -1,16 +1,16 @@
 #[derive(Clone, Debug)]
-pub(crate) struct Presentation(String);
+pub struct Presentation(String);
 
 impl Presentation {
-    pub(crate) fn new(text: impl Into<String>) -> Self {
+    pub fn new(text: impl Into<String>) -> Self {
         Self(text.into())
     }
 
-    pub(crate) fn number(value: f64) -> Self {
+    pub fn number(value: f64) -> Self {
         Self(Self::formatted(value, Some(',')))
     }
 
-    pub(crate) fn plain(value: f64) -> Self {
+    pub fn plain(value: f64) -> Self {
         Self(Self::formatted(value, None))
     }
 
@@ -91,14 +91,14 @@ impl From<String> for Presentation {
     }
 }
 
-pub(crate) struct Shown {
-    pub(crate) text: Presentation,
-    pub(crate) color: eframe::egui::Color32,
-    pub(crate) plain: Option<Presentation>,
-    pub(crate) kind: &'static str,
+pub struct Shown {
+    pub text: Presentation,
+    pub color: eframe::egui::Color32,
+    pub plain: Option<Presentation>,
+    pub kind: &'static str,
 }
 
-pub(crate) trait Render {
+pub trait Render {
     fn render(&self) -> Option<Shown>;
 }
 
@@ -190,15 +190,12 @@ impl Render for element::Failure {
     }
 }
 
-pub(crate) struct Renderers {
-    entries: std::collections::HashMap<
-        std::any::TypeId,
-        fn(&dyn std::any::Any) -> Option<Shown>,
-    >,
+pub struct Renderers {
+    entries: std::collections::HashMap<std::any::TypeId, fn(&dyn std::any::Any) -> Option<Shown>>,
 }
 
 impl Renderers {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let mut renderers = Self {
             entries: std::collections::HashMap::new(),
         };
@@ -214,13 +211,12 @@ impl Renderers {
     }
 
     fn learn<T: Render + 'static>(&mut self) {
-        self.entries.insert(
-            std::any::TypeId::of::<T>(),
-            |value| value.downcast_ref::<T>().and_then(Render::render),
-        );
+        self.entries.insert(std::any::TypeId::of::<T>(), |value| {
+            value.downcast_ref::<T>().and_then(Render::render)
+        });
     }
 
-    pub(crate) fn render(&self, value: &element::Value) -> Option<Shown> {
+    pub fn render(&self, value: &element::Value) -> Option<Shown> {
         let any = value.any();
         self.entries
             .get(&any.type_id())

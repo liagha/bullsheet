@@ -1,11 +1,11 @@
-pub(crate) struct Icon {
+pub struct Icon {
     rgba: &'static [u8],
     width: u32,
     height: u32,
 }
 
 impl Icon {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             rgba: include_bytes!("../assets/bullsheet-64.rgba").as_slice(),
             width: 64,
@@ -13,7 +13,7 @@ impl Icon {
         }
     }
 
-    pub(crate) fn data(&self) -> eframe::egui::IconData {
+    pub fn data(&self) -> eframe::egui::IconData {
         eframe::egui::IconData {
             rgba: self.rgba.to_vec(),
             width: self.width,
@@ -21,15 +21,15 @@ impl Icon {
         }
     }
 
-    pub(crate) fn rgba(&self) -> Vec<u8> {
+    pub fn rgba(&self) -> Vec<u8> {
         self.rgba.to_vec()
     }
 
-    pub(crate) fn width(&self) -> u32 {
+    pub fn width(&self) -> u32 {
         self.width
     }
 
-    pub(crate) fn height(&self) -> u32 {
+    pub fn height(&self) -> u32 {
         self.height
     }
 }

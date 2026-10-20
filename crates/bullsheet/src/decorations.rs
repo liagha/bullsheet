@@ -1,22 +1,21 @@
-pub(crate) struct Decorations;
+pub struct Decorations;
 
 impl Decorations {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
 
 #[cfg(target_os = "windows")]
 impl Decorations {
-    pub(crate) fn apply(&self, frame: &mut eframe::Frame) {
+    pub fn apply(&self, frame: &mut eframe::Frame) {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         use windows_sys::Win32::Graphics::Dwm::{
             DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
         };
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongPtrW, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_CAPTION,
-            WS_SYSMENU,
+            GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_SYSMENU,
         };
         let Ok(handle) = frame.window_handle() else {
             return;
@@ -40,11 +39,7 @@ impl Decorations {
                     0,
                     0,
                     0,
-                    SWP_FRAMECHANGED
-                        | SWP_NOMOVE
-                        | SWP_NOSIZE
-                        | SWP_NOZORDER
-                        | SWP_NOACTIVATE,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
                 );
             }
         }
@@ -62,5 +57,5 @@ impl Decorations {
 
 #[cfg(not(target_os = "windows"))]
 impl Decorations {
-    pub(crate) fn apply(&self, _frame: &mut eframe::Frame) {}
+    pub fn apply(&self, _frame: &mut eframe::Frame) {}
 }

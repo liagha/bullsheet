@@ -1,20 +1,18 @@
 use element::Failure;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{
-    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
-};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 const SHOW: &str = "show";
 const AUTOSTART: &str = "autostart";
 const QUIT: &str = "quit";
 
-pub(crate) enum Action {
+pub enum Action {
     Toggle,
     Autostart,
     Quit,
 }
 
-pub(crate) struct Tray {
+pub struct Tray {
     #[allow(dead_code)]
     icon: TrayIcon,
     autostart: CheckMenuItem,
@@ -22,18 +20,9 @@ pub(crate) struct Tray {
 }
 
 impl Tray {
-    pub(crate) fn new(
-        context: &eframe::egui::Context,
-        autostart: bool,
-    ) -> Result<Self, Failure> {
+    pub fn new(context: &eframe::egui::Context, autostart: bool) -> Result<Self, Failure> {
         let show = MenuItem::with_id(SHOW, "Show", true, None);
-        let startup = CheckMenuItem::with_id(
-            AUTOSTART,
-            "Start with system",
-            true,
-            autostart,
-            None,
-        );
+        let startup = CheckMenuItem::with_id(AUTOSTART, "Start with system", true, autostart, None);
         let quit = MenuItem::with_id(QUIT, "Quit", true, None);
         let menu = Menu::new();
         menu.append_items(&[
@@ -92,11 +81,11 @@ impl Tray {
         })
     }
 
-    pub(crate) fn action(&self) -> Option<Action> {
+    pub fn action(&self) -> Option<Action> {
         self.action.lock().ok().and_then(|mut slot| slot.take())
     }
 
-    pub(crate) fn set_autostart(&self, enabled: bool) {
+    pub fn set_autostart(&self, enabled: bool) {
         self.autostart.set_checked(enabled);
     }
 }

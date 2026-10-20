@@ -1,13 +1,10 @@
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Combination(global_hotkey::hotkey::HotKey);
+pub struct Combination(global_hotkey::hotkey::HotKey);
 
 impl Default for Combination {
     fn default() -> Self {
         Self(global_hotkey::hotkey::HotKey::new(
-            Some(
-                global_hotkey::hotkey::Modifiers::CONTROL
-                    | global_hotkey::hotkey::Modifiers::ALT,
-            ),
+            Some(global_hotkey::hotkey::Modifiers::CONTROL | global_hotkey::hotkey::Modifiers::ALT),
             global_hotkey::hotkey::Code::KeyC,
         ))
     }
@@ -36,13 +33,15 @@ impl std::fmt::Display for Combination {
 }
 
 impl Combination {
-    pub(crate) fn from_key(key: &element::Key) -> Result<Self, element::Failure> {
-        key.to_string().parse().map_err(|error: global_hotkey::hotkey::HotKeyParseError| {
-            element::Failure::new(error.to_string())
-        })
+    pub fn from_key(key: &element::Key) -> Result<Self, element::Failure> {
+        key.to_string()
+            .parse()
+            .map_err(|error: global_hotkey::hotkey::HotKeyParseError| {
+                element::Failure::new(error.to_string())
+            })
     }
 
-    pub(crate) fn key(&self) -> element::Key {
+    pub fn key(&self) -> element::Key {
         use global_hotkey::hotkey::Modifiers;
         let mut modifiers = element::Modifiers::NONE;
         for (source, target) in [
@@ -65,14 +64,11 @@ impl std::str::FromStr for Combination {
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         use global_hotkey::hotkey::HotKey;
         let normalized = Self::normalize(text);
-        let hotkey =
-            <HotKey as std::str::FromStr>::from_str(&normalized)?;
+        let hotkey = <HotKey as std::str::FromStr>::from_str(&normalized)?;
         if hotkey.mods.is_empty() {
-            return Err(
-                global_hotkey::hotkey::HotKeyParseError::InvalidFormat(
-                    text.to_string(),
-                ),
-            );
+            return Err(global_hotkey::hotkey::HotKeyParseError::InvalidFormat(
+                text.to_string(),
+            ));
         }
         Ok(Self(hotkey))
     }
@@ -91,9 +87,7 @@ impl Combination {
         text.split('+')
             .map(|part| {
                 let token = part.trim();
-                if token.eq_ignore_ascii_case("ctrl")
-                    || token.eq_ignore_ascii_case("control")
-                {
+                if token.eq_ignore_ascii_case("ctrl") || token.eq_ignore_ascii_case("control") {
                     "Ctrl".to_string()
                 } else if token.eq_ignore_ascii_case("alt") {
                     "Alt".to_string()
@@ -112,9 +106,7 @@ impl Combination {
                 {
                     format!("Key{}", token.to_ascii_uppercase())
                 } else if token.len() == 1
-                    && token
-                        .chars()
-                        .all(|character| character.is_ascii_digit())
+                    && token.chars().all(|character| character.is_ascii_digit())
                 {
                     format!("Digit{token}")
                 } else if token
@@ -124,9 +116,7 @@ impl Combination {
                     format!("Key{}", token[3..].to_ascii_uppercase())
                 } else if token
                     .get(..5)
-                    .is_some_and(|prefix| {
-                        prefix.eq_ignore_ascii_case("digit")
-                    })
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("digit"))
                 {
                     format!("Digit{}", &token[5..])
                 } else {
@@ -139,10 +129,10 @@ impl Combination {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Toggle;
+pub struct Toggle;
 
 #[derive(Debug)]
-pub(crate) struct ShortcutFailure(String);
+pub struct ShortcutFailure(String);
 
 impl ShortcutFailure {
     fn new(message: impl Into<String>) -> Self {
@@ -158,7 +148,7 @@ impl std::fmt::Display for ShortcutFailure {
 
 impl std::error::Error for ShortcutFailure {}
 
-pub(crate) struct Shortcut {
+pub struct Shortcut {
     manager: global_hotkey::GlobalHotKeyManager,
     combination: Combination,
     identifier: std::sync::Arc<std::sync::atomic::AtomicU32>,
@@ -166,7 +156,7 @@ pub(crate) struct Shortcut {
 }
 
 impl Shortcut {
-    pub(crate) fn new(
+    pub fn new(
         context: &eframe::egui::Context,
         combination: Combination,
     ) -> Result<Self, ShortcutFailure> {
@@ -177,16 +167,12 @@ impl Shortcut {
             .map_err(|error| ShortcutFailure::new(error.to_string()))?;
         let (sender, receiver) = std::sync::mpsc::channel();
         let context = context.clone();
-        let identifier = std::sync::Arc::new(
-            std::sync::atomic::AtomicU32::new(combination.0.id()),
-        );
+        let identifier = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(combination.0.id()));
         let thread_identifier = identifier.clone();
         std::thread::spawn(move || {
             let events = global_hotkey::GlobalHotKeyEvent::receiver();
             while let Ok(event) = events.recv() {
-                if event.id
-                    == thread_identifier
-                        .load(std::sync::atomic::Ordering::Relaxed)
+                if event.id == thread_identifier.load(std::sync::atomic::Ordering::Relaxed)
                     && event.state == global_hotkey::HotKeyState::Pressed
                 {
                     if sender.send(Toggle).is_err() {
@@ -204,19 +190,14 @@ impl Shortcut {
         })
     }
 
-    pub(crate) fn replace(
-        &mut self,
-        combination: Combination,
-    ) -> Result<(), ShortcutFailure> {
+    pub fn replace(&mut self, combination: Combination) -> Result<(), ShortcutFailure> {
         let previous = self.combination;
         let _ = self.manager.unregister(previous.0);
         match self.manager.register(combination.0) {
             Ok(()) => {
                 self.combination = combination;
-                self.identifier.store(
-                    combination.0.id(),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                self.identifier
+                    .store(combination.0.id(), std::sync::atomic::Ordering::Relaxed);
                 Ok(())
             }
             Err(error) => {
@@ -226,7 +207,7 @@ impl Shortcut {
         }
     }
 
-    pub(crate) fn requested(&self) -> Option<Toggle> {
+    pub fn requested(&self) -> Option<Toggle> {
         self.receiver.try_recv().ok()
     }
 }

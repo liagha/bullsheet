@@ -14,10 +14,10 @@ const TARGET: &str = if cfg!(target_os = "windows") {
 };
 
 #[derive(Debug)]
-pub(crate) struct Version(Presentation);
+pub struct Version(Presentation);
 
 impl Version {
-    pub(crate) fn current() -> Self {
+    pub fn current() -> Self {
         Self(Presentation::new(env!("CARGO_PKG_VERSION")))
     }
 
@@ -33,18 +33,18 @@ impl std::fmt::Display for Version {
 }
 
 #[derive(Debug)]
-pub(crate) enum Report {
+pub enum Report {
     Current,
     Updated(Version),
     Failed(Failure),
 }
 
-pub(crate) struct Updater {
+pub struct Updater {
     reports: std::sync::mpsc::Receiver<Report>,
 }
 
 impl Updater {
-    pub(crate) fn new(context: &eframe::egui::Context) -> Self {
+    pub fn new(context: &eframe::egui::Context) -> Self {
         let (sender, reports) = std::sync::mpsc::channel();
         let wake = context.clone();
         std::thread::spawn(move || {
@@ -54,7 +54,7 @@ impl Updater {
         Self { reports }
     }
 
-    pub(crate) fn report(&self) -> Option<Report> {
+    pub fn report(&self) -> Option<Report> {
         self.reports.try_recv().ok()
     }
 
@@ -80,9 +80,7 @@ impl Updater {
             Err(error) => return Report::Failed(Failure::new(error.to_string())),
         };
         match update.update() {
-            Ok(VersionStatus::Updated(version)) => {
-                Report::Updated(Version::new(version))
-            }
+            Ok(VersionStatus::Updated(version)) => Report::Updated(Version::new(version)),
             Ok(_) => Report::Current,
             Err(error) => Report::Failed(Failure::new(error.to_string())),
         }

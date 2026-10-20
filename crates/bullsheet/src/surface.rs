@@ -6,32 +6,29 @@ const DEPTHS: [eframe::egui::Color32; 3] = [
 const UNMATCHED: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(255, 123, 114);
 const BASE: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(224, 227, 233);
 
-pub(crate) struct Run {
+pub struct Run {
     span: std::ops::Range<usize>,
     color: eframe::egui::Color32,
 }
 
 impl Run {
-    pub(crate) fn span(&self) -> std::ops::Range<usize> {
+    pub fn span(&self) -> std::ops::Range<usize> {
         self.span.clone()
     }
 
-    pub(crate) fn color(&self) -> eframe::egui::Color32 {
+    pub fn color(&self) -> eframe::egui::Color32 {
         self.color
     }
 }
 
-pub(crate) struct Surface<'a> {
+pub struct Surface<'a> {
     readings: &'a evaluator::Readings,
     renderers: &'a crate::render::Renderers,
     font: eframe::egui::FontId,
 }
 
 impl<'a> Surface<'a> {
-    pub(crate) fn new(
-        readings: &'a evaluator::Readings,
-        renderers: &'a crate::render::Renderers,
-    ) -> Self {
+    pub fn new(readings: &'a evaluator::Readings, renderers: &'a crate::render::Renderers) -> Self {
         Self {
             readings,
             renderers,
@@ -39,11 +36,11 @@ impl<'a> Surface<'a> {
         }
     }
 
-    pub(crate) fn font(&self) -> &eframe::egui::FontId {
+    pub fn font(&self) -> &eframe::egui::FontId {
         &self.font
     }
 
-    pub(crate) fn runs(&self, index: usize, line: &str) -> Vec<Run> {
+    pub fn runs(&self, index: usize, line: &str) -> Vec<Run> {
         let characters = line.chars().count();
         let mut runs: Vec<Run> = Vec::new();
         if let Some(reading) = self.readings.get(index) {
@@ -98,7 +95,7 @@ impl<'a> Surface<'a> {
         runs
     }
 
-    pub(crate) fn galley(
+    pub fn galley(
         &self,
         ui: &eframe::egui::Ui,
         text: &str,
@@ -143,7 +140,7 @@ impl<'a> Surface<'a> {
         ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
     }
 
-    pub(crate) fn locate(&self, text: &str, character: usize) -> Option<(&'a evaluator::Part, String)> {
+    pub fn locate(&self, text: &str, character: usize) -> Option<(&'a evaluator::Part, String)> {
         let mut character = character;
         for (index, line) in text.split('\n').enumerate() {
             let characters = line.chars().count();
@@ -167,7 +164,7 @@ impl<'a> Surface<'a> {
         None
     }
 
-    pub(crate) fn editor(
+    pub fn editor(
         &self,
         ui: &mut eframe::egui::Ui,
         width: f32,
@@ -181,18 +178,18 @@ impl<'a> Surface<'a> {
                     eframe::egui::Event::Ime(eframe::egui::ImeEvent::Preedit { text, .. }) => text,
                     _ => continue,
                 };
-                *text = text
-                    .chars()
-                    .map(|character| match character {
-                        '۰'..='۹' => char::from_digit(character as u32 - '۰' as u32, 10)
-                            .unwrap_or(character),
-                        '٠'..='٩' => char::from_digit(character as u32 - '٠' as u32, 10)
-                            .unwrap_or(character),
-                        '٬' | '،' => ',',
-                        '٫' => '.',
-                        _ => character,
-                    })
-                    .collect();
+                *text =
+                    text.chars()
+                        .map(|character| match character {
+                            '۰'..='۹' => char::from_digit(character as u32 - '۰' as u32, 10)
+                                .unwrap_or(character),
+                            '٠'..='٩' => char::from_digit(character as u32 - '٠' as u32, 10)
+                                .unwrap_or(character),
+                            '٬' | '،' => ',',
+                            '٫' => '.',
+                            _ => character,
+                        })
+                        .collect();
             }
         });
         // egui has no bidi and shapes Arabic-script runs right to left, so Persian digits would
@@ -212,8 +209,8 @@ impl<'a> Surface<'a> {
                     .margin(eframe::egui::Margin::ZERO)
                     .hint_text("Type an expression")
                     .layouter(&mut |ui: &eframe::egui::Ui,
-                                   text: &dyn eframe::egui::TextBuffer,
-                                   _wrap_width: f32| {
+                                    text: &dyn eframe::egui::TextBuffer,
+                                    _wrap_width: f32| {
                         self.galley(ui, text.as_str())
                     }),
                 |query| self.suggestions(query.word),

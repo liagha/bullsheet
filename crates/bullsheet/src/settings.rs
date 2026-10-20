@@ -2,7 +2,7 @@ use element::{Callable, Failure, Function, Text, Truth, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub(crate) struct Settings {
+pub struct Settings {
     combination: Rc<RefCell<crate::shortcut::Combination>>,
     shortcut: Rc<RefCell<Option<crate::shortcut::Shortcut>>>,
     autostart: Option<Rc<crate::autostart::Autostart>>,
@@ -10,7 +10,7 @@ pub(crate) struct Settings {
 }
 
 impl Settings {
-    pub(crate) fn new(
+    pub fn new(
         combination: crate::shortcut::Combination,
         shortcut: Option<crate::shortcut::Shortcut>,
         autostart: Option<crate::autostart::Autostart>,
@@ -23,11 +23,7 @@ impl Settings {
         }
     }
 
-    pub(crate) fn install(
-        &self,
-        calculator: &mut evaluator::Calculator,
-        context: &eframe::egui::Context,
-    ) {
+    pub fn install(&self, calculator: &mut evaluator::Calculator, context: &eframe::egui::Context) {
         calculator.install(
             "shortcut",
             Function::new(ShortcutSetting {
@@ -51,15 +47,15 @@ impl Settings {
         );
     }
 
-    pub(crate) fn combination(&self) -> crate::shortcut::Combination {
+    pub fn combination(&self) -> crate::shortcut::Combination {
         *self.combination.borrow()
     }
 
-    pub(crate) fn registered(&self) -> bool {
+    pub fn registered(&self) -> bool {
         self.shortcut.borrow().is_some()
     }
 
-    pub(crate) fn requested(&self) -> bool {
+    pub fn requested(&self) -> bool {
         self.shortcut
             .borrow()
             .as_ref()
@@ -67,18 +63,18 @@ impl Settings {
             .unwrap_or(false)
     }
 
-    pub(crate) fn autostart(&self) -> Option<Rc<crate::autostart::Autostart>> {
+    pub fn autostart(&self) -> Option<Rc<crate::autostart::Autostart>> {
         self.autostart.clone()
     }
 
-    pub(crate) fn autostart_enabled(&self) -> bool {
+    pub fn autostart_enabled(&self) -> bool {
         self.autostart
             .as_ref()
             .map(|autostart| autostart.enabled())
             .unwrap_or(false)
     }
 
-    pub(crate) fn set_update(&self, report: Option<&crate::update::Report>) {
+    pub fn set_update(&self, report: Option<&crate::update::Report>) {
         *self.update.borrow_mut() = report.map(|report| match report {
             crate::update::Report::Updated(version) => {
                 format!("updated to {version} — restart to apply")

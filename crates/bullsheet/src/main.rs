@@ -2,6 +2,7 @@
 
 mod application;
 mod autostart;
+mod calculator;
 mod decorations;
 mod icon;
 mod instance;
@@ -9,6 +10,7 @@ mod popup;
 mod render;
 mod settings;
 mod shortcut;
+mod station;
 mod surface;
 mod tray;
 mod update;

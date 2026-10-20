@@ -8,6 +8,7 @@ mod instance;
 mod popup;
 mod render;
 mod shortcut;
+mod surface;
 mod tray;
 mod update;
 

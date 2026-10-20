@@ -529,10 +529,11 @@ impl eframe::App for Application {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            let font = FontId::monospace(16.0);
-                            let viewport = ui.clip_rect();
                             let spacing = 14.0;
-                            let base = Color32::from_rgb(224, 227, 233);
+                            let surface = crate::surface::Surface::new(readings, renderers);
+                            let font = surface.font().clone();
+                            let base = surface.base();
+                            let viewport = ui.clip_rect();
                             let mut gutter_width: f32 = 170.0;
                             for reading in readings.iter() {
                                 let shown = match renderers.render(reading.value()) {
@@ -554,114 +555,6 @@ impl eframe::App for Application {
                             let gutter_right = viewport.right() - 10.0;
                             let editor_width =
                                 (gutter_right - gutter_width - spacing - viewport.left()).max(100.0);
-                            let depths = [
-                                Color32::from_rgb(86, 182, 194),
-                                Color32::from_rgb(206, 145, 120),
-                                Color32::from_rgb(197, 134, 192),
-                            ];
-                            let unmatched = Color32::from_rgb(255, 123, 114);
-                            let mut layouter = |ui: &egui::Ui,
-                                                text: &dyn egui::TextBuffer,
-                                                _wrap_width: f32| {
-                                let text = text.as_str();
-                                let mut job = egui::text::LayoutJob::default();
-                                job.wrap.max_width = f32::INFINITY;
-                                let lines: Vec<&str> = text.split('\n').collect();
-                                for (index, line) in lines.iter().enumerate() {
-                                    let characters = line.chars().count();
-                                    let boundaries: Vec<usize> = line
-                                        .char_indices()
-                                        .map(|(byte, _)| byte)
-                                        .chain(std::iter::once(line.len()))
-                                        .collect();
-                                    let mut runs: Vec<(usize, usize, Color32)> = Vec::new();
-                                    if let Some(reading) = readings.get(index) {
-                                        for part in reading.parts() {
-                                            let span = part.span();
-                                            let start = span.start.min(characters);
-                                            let end = span.end.min(characters).max(start);
-                                            if start >= end {
-                                                continue;
-                                            }
-                                            let color = renderers
-                                                .render(part.value())
-                                                .map_or(base, |shown| shown.color);
-                                            runs.push((start, end, color));
-                                        }
-                                    }
-                                    let mut open: Vec<usize> = Vec::new();
-                                    for (position, character) in line.chars().enumerate() {
-                                        match character {
-                                            '(' => open.push(position),
-                                            ')' => match open.pop() {
-                                                Some(partner) => {
-                                                    let color = depths[open.len() % depths.len()];
-                                                    runs.push((partner, partner + 1, color));
-                                                    runs.push((position, position + 1, color));
-                                                }
-                                                None => {
-                                                    runs.push((position, position + 1, unmatched))
-                                                }
-                                            },
-                                            _ => {}
-                                        }
-                                    }
-                                    for partner in open {
-                                        runs.push((partner, partner + 1, unmatched));
-                                    }
-                                    runs.sort_by_key(|(start, _, _)| *start);
-                                    let mut position = 0;
-                                    for (start, end, color) in runs {
-                                        if start < position || start >= end {
-                                            continue;
-                                        }
-                                        if start > position {
-                                            job.append(
-                                                &line[boundaries[position]..boundaries[start]],
-                                                0.0,
-                                                egui::TextFormat {
-                                                    font_id: font.clone(),
-                                                    color: base,
-                                                    ..Default::default()
-                                                },
-                                            );
-                                        }
-                                        job.append(
-                                            &line[boundaries[start]..boundaries[end]],
-                                            0.0,
-                                            egui::TextFormat {
-                                                font_id: font.clone(),
-                                                color,
-                                                ..Default::default()
-                                            },
-                                        );
-                                        position = end;
-                                    }
-                                    if position < characters {
-                                        job.append(
-                                            &line[boundaries[position]..],
-                                            0.0,
-                                            egui::TextFormat {
-                                                font_id: font.clone(),
-                                                color: base,
-                                                ..Default::default()
-                                            },
-                                        );
-                                    }
-                                    if index + 1 < lines.len() {
-                                        job.append(
-                                            "\n",
-                                            0.0,
-                                            egui::TextFormat {
-                                                font_id: font.clone(),
-                                                color: base,
-                                                ..Default::default()
-                                            },
-                                        );
-                                    }
-                                }
-                                ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
-                            };
                             ui.input_mut(|input| {
                                 for event in &mut input.events {
                                     let text = match event {
@@ -702,14 +595,18 @@ impl eframe::App for Application {
                                 .show(
                                     ui,
                                     egui::TextEdit::multiline(source.as_mut())
-                                        .font(FontId::monospace(16.0))
+                                        .font(font.clone())
                                         .text_color(base)
                                         .desired_width(editor_width)
                                         .desired_rows(10)
                                         .frame(egui::Frame::NONE)
                                         .margin(egui::Margin::ZERO)
                                         .hint_text("Type an expression")
-                                        .layouter(&mut layouter),
+                                        .layouter(&mut |ui: &egui::Ui,
+                                                       text: &dyn egui::TextBuffer,
+                                                       _wrap_width: f32| {
+                                            surface.galley(ui, text.as_str())
+                                        }),
                                     |query| {
                                         if query.word.is_empty() {
                                             return Vec::new();
@@ -737,6 +634,7 @@ impl eframe::App for Application {
                             if accepted || output.response.changed() {
                                 *readings = calculator.evaluate(source, angle);
                             }
+                            let surface = crate::surface::Surface::new(readings, renderers);
                             if *focus_requested {
                                 output.response.request_focus();
                                 let count = source.as_ref().chars().count();
@@ -820,31 +718,10 @@ impl eframe::App for Application {
                                 }
                                 let cursor =
                                     output.galley.cursor_from_pos(position - output.galley_pos);
-                                let mut index = cursor.index.0;
-                                for (line_index, line) in source.as_ref().split('\n').enumerate() {
-                                    let characters = line.chars().count();
-                                    if index <= characters {
-                                        let reading = readings.get(line_index)?;
-                                        return reading
-                                            .parts()
-                                            .iter()
-                                            .find(|part| part.span().contains(&index))
-                                            .map(|part| {
-                                                let span = part.span();
-                                                let text: String = line
-                                                    .chars()
-                                                    .skip(span.start)
-                                                    .take(span.end - span.start)
-                                                    .collect();
-                                                (part.value(), text)
-                                            });
-                                    }
-                                    index -= characters + 1;
-                                }
-                                None
+                                surface.locate(source.as_ref(), cursor.index.0)
                             });
-                            if let Some((value, text)) = hovered {
-                                let tip = match renderers.render(value) {
+                            if let Some((part, text)) = hovered {
+                                let tip = match renderers.render(part.value()) {
                                     Some(shown) => {
                                         format!("{} {} — ctrl-click copies", shown.kind, shown.text)
                                     }

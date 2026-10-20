@@ -99,7 +99,7 @@ impl<'a> Line<'a> {
             return Ok(Statement::Empty);
         }
         let offset = self.text.chars().count() - self.text.trim_start().chars().count();
-        if let Some((left, right)) = code.split_once('=') {
+        if let Some((left, right)) = Self::assignment(code) {
             let expression = Expression::new(right, offset + left.chars().count() + 1);
             if expression.is_empty() {
                 return Err(Failure::new("missing expression"));
@@ -126,6 +126,28 @@ impl<'a> Line<'a> {
             return Ok(Statement::Empty);
         }
         Ok(Statement::Expression(expression))
+    }
+
+    fn assignment(code: &str) -> Option<(&str, &str)> {
+        let characters: Vec<char> = code.chars().collect();
+        let mut depth = 0usize;
+        for (index, character) in characters.iter().enumerate() {
+            match character {
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                '=' if depth == 0 => {
+                    let previous = index.checked_sub(1).map(|earlier| characters[earlier]);
+                    let next = characters.get(index + 1);
+                    if matches!(previous, Some('=' | '<' | '>' | '!')) || next == Some(&'=') {
+                        continue;
+                    }
+                    let byte = code.char_indices().nth(index)?.0;
+                    return Some((&code[..byte], &code[byte + 1..]));
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn definition(
@@ -399,21 +421,27 @@ impl<'a> IntoIterator for &'a Readings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Symbol(char);
+struct Symbol(&'static str);
 
 impl Symbol {
-    const PLUS: Self = Self('+');
-    const MINUS: Self = Self('-');
-    const STAR: Self = Self('*');
-    const SLASH: Self = Self('/');
-    const PERCENT: Self = Self('%');
-    const CARET: Self = Self('^');
-    const BANG: Self = Self('!');
+    const PLUS: Self = Self("+");
+    const MINUS: Self = Self("-");
+    const STAR: Self = Self("*");
+    const SLASH: Self = Self("/");
+    const PERCENT: Self = Self("%");
+    const CARET: Self = Self("^");
+    const BANG: Self = Self("!");
+    const EQUAL: Self = Self("==");
+    const NOT_EQUAL: Self = Self("!=");
+    const LESS: Self = Self("<");
+    const GREATER: Self = Self(">");
+    const LESS_OR_EQUAL: Self = Self("<=");
+    const GREATER_OR_EQUAL: Self = Self(">=");
 }
 
 impl std::fmt::Display for Symbol {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.0)
+        formatter.write_str(self.0)
     }
 }
 
@@ -429,6 +457,8 @@ impl TryFrom<char> for Symbol {
             '%' => Ok(Self::PERCENT),
             '^' => Ok(Self::CARET),
             '!' => Ok(Self::BANG),
+            '<' => Ok(Self::LESS),
+            '>' => Ok(Self::GREATER),
             _ => Err(Failure::new(format!("unexpected character {character}"))),
         }
     }
@@ -503,6 +533,39 @@ impl Tokens {
 
     fn is_empty(&self) -> bool {
         self.peek().is_none()
+    }
+
+    fn lazy_arguments(
+        &mut self,
+    ) -> Result<Vec<Vec<(Token, std::ops::Range<usize>)>>, Failure> {
+        let mut arguments = Vec::new();
+        let mut current = Vec::new();
+        let mut depth = 0usize;
+        loop {
+            let item = match self.items.get(self.position).cloned() {
+                Some(item) => item,
+                None => return Err(Failure::new("expected ')'")),
+            };
+            self.position += 1;
+            match &item.0 {
+                Token::LeftParenthesis => {
+                    depth += 1;
+                    current.push(item);
+                }
+                Token::RightParenthesis if depth == 0 => {
+                    if !current.is_empty() || !arguments.is_empty() {
+                        arguments.push(current);
+                    }
+                    return Ok(arguments);
+                }
+                Token::RightParenthesis => {
+                    depth = depth.saturating_sub(1);
+                    current.push(item);
+                }
+                Token::Comma if depth == 0 => arguments.push(std::mem::take(&mut current)),
+                _ => current.push(item),
+            }
+        }
     }
 }
 
@@ -730,9 +793,17 @@ impl Lexer {
         let character = self
             .bump()
             .ok_or_else(|| Failure::new("unexpected end of expression"))?;
-        if character == '*' && self.peek() == Some('*') {
+        let pair = match (character, self.peek()) {
+            ('*', Some('*')) => Some(Symbol::CARET),
+            ('=', Some('=')) => Some(Symbol::EQUAL),
+            ('!', Some('=')) => Some(Symbol::NOT_EQUAL),
+            ('<', Some('=')) => Some(Symbol::LESS_OR_EQUAL),
+            ('>', Some('=')) => Some(Symbol::GREATER_OR_EQUAL),
+            _ => None,
+        };
+        if let Some(symbol) = pair {
             self.bump();
-            return Ok(Token::Symbol(Symbol::CARET));
+            return Ok(Token::Symbol(symbol));
         }
         Ok(Token::Symbol(Symbol::try_from(character)?))
     }
@@ -759,6 +830,7 @@ struct Precedence(u8);
 
 impl Precedence {
     const LOWEST: Self = Self(0);
+    const COMPARISON: Self = Self(5);
     const ADDITION: Self = Self(10);
     const MULTIPLICATION: Self = Self(20);
     const PREFIX: Self = Self(25);
@@ -1145,6 +1217,19 @@ struct Comparison {
     compare: fn(f64, f64) -> bool,
 }
 
+const COMPARISONS: [(Symbol, &str, fn(f64, f64) -> bool); 4] = [
+    (Symbol::LESS, "less", |left, right| left < right),
+    (Symbol::GREATER, "greater", |left, right| left > right),
+    (Symbol::LESS_OR_EQUAL, "less_or_equal", |left, right| {
+        left <= right
+    }),
+    (
+        Symbol::GREATER_OR_EQUAL,
+        "greater_or_equal",
+        |left, right| left >= right,
+    ),
+];
+
 impl Callable for Comparison {
     fn name(&self) -> Text {
         Text::new(self.name)
@@ -1158,6 +1243,96 @@ impl Callable for Comparison {
             left.value(),
             right.value(),
         ))))
+    }
+}
+
+struct Equality;
+
+impl Callable for Equality {
+    fn name(&self) -> Text {
+        Text::new("equal")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        Arguments::new(values).expect(&self.name(), Arity::exactly(2))?;
+        let same = values[0]
+            .equals(&values[1])
+            .ok_or_else(|| Failure::new("these values cannot be compared"))?;
+        Ok(Value::new(Truth::new(same)))
+    }
+}
+
+struct Inequality;
+
+impl Callable for Inequality {
+    fn name(&self) -> Text {
+        Text::new("not_equal")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        Arguments::new(values).expect(&self.name(), Arity::exactly(2))?;
+        let same = values[0]
+            .equals(&values[1])
+            .ok_or_else(|| Failure::new("these values cannot be compared"))?;
+        Ok(Value::new(Truth::new(!same)))
+    }
+}
+
+struct Conditional;
+
+impl Callable for Conditional {
+    fn name(&self) -> Text {
+        Text::new("if")
+    }
+
+    fn lazy(&self) -> bool {
+        true
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
+        arguments.expect(&self.name(), Arity::exactly(3))?;
+        let condition = values[0]
+            .cast::<Function>()
+            .ok_or_else(|| Failure::new("if requires expressions"))?
+            .call(&[])?;
+        let condition = condition
+            .cast::<Truth>()
+            .map(|truth| truth.value())
+            .ok_or_else(|| Failure::new("if requires a condition"))?;
+        let chosen = if condition { 1 } else { 2 };
+        let branch = values[chosen]
+            .cast::<Function>()
+            .ok_or_else(|| Failure::new("if requires expressions"))?;
+        branch.call(&[])
+    }
+}
+
+struct Deferred {
+    tokens: Vec<(Token, std::ops::Range<usize>)>,
+    variables: std::rc::Rc<std::cell::RefCell<Variables>>,
+    language: std::rc::Rc<Language>,
+    depth: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl Callable for Deferred {
+    fn name(&self) -> Text {
+        Text::new("expression")
+    }
+
+    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        Arguments::new(values).expect(&self.name(), Arity::exactly(0))?;
+        let session = Session {
+            variables: std::rc::Rc::clone(&self.variables),
+            language: std::rc::Rc::clone(&self.language),
+            depth: std::rc::Rc::clone(&self.depth),
+        };
+        Parser::new(
+            Tokens::new(self.tokens.clone()),
+            &session.language.operators,
+            &session,
+        )
+        .value()
     }
 }
 
@@ -1645,6 +1820,24 @@ impl Operators {
             Symbol::CARET,
             Operator::new(Power, Precedence::POWER, Associativity::Right),
         );
+        for (symbol, name, compare) in COMPARISONS {
+            infixes.insert(
+                symbol,
+                Operator::new(
+                    Comparison { name, compare },
+                    Precedence::COMPARISON,
+                    Associativity::Left,
+                ),
+            );
+        }
+        infixes.insert(
+            Symbol::EQUAL,
+            Operator::new(Equality, Precedence::COMPARISON, Associativity::Left),
+        );
+        infixes.insert(
+            Symbol::NOT_EQUAL,
+            Operator::new(Inequality, Precedence::COMPARISON, Associativity::Left),
+        );
         let mut postfixes = HashMap::new();
         postfixes.insert(
             Symbol::BANG,
@@ -1772,15 +1965,19 @@ impl Functions {
         entries.insert(Identifier::new("not"), Value::new(Function::new(LogicalNot)));
         entries.insert(Identifier::new("and"), Value::new(Function::new(LogicalAnd)));
         entries.insert(Identifier::new("or"), Value::new(Function::new(LogicalOr)));
-        let comparisons: [(&str, fn(f64, f64) -> bool); 6] = [
-            ("equal", |left, right| left == right),
-            ("not_equal", |left, right| left != right),
-            ("less", |left, right| left < right),
-            ("greater", |left, right| left > right),
-            ("less_or_equal", |left, right| left <= right),
-            ("greater_or_equal", |left, right| left >= right),
-        ];
-        for (name, compare) in comparisons {
+        entries.insert(
+            Identifier::new("equal"),
+            Value::new(Function::new(Equality)),
+        );
+        entries.insert(
+            Identifier::new("not_equal"),
+            Value::new(Function::new(Inequality)),
+        );
+        entries.insert(
+            Identifier::new("if"),
+            Value::new(Function::new(Conditional)),
+        );
+        for (_, name, compare) in COMPARISONS {
             entries.insert(
                 Identifier::new(name),
                 Value::new(Function::new(Comparison { name, compare })),
@@ -2270,7 +2467,11 @@ impl<'a> Parser<'a> {
             let function = value
                 .cast::<Function>()
                 .ok_or_else(|| Failure::new(format!("{name} is not a function")))?;
-            let arguments = self.arguments()?;
+            let arguments = if function.lazy() {
+                self.lazy_arguments()?
+            } else {
+                self.arguments()?
+            };
             return function.call(&arguments);
         }
         match self.session.lookup(&name) {
@@ -2283,6 +2484,21 @@ impl<'a> Parser<'a> {
                 Err(failure)
             }
         }
+    }
+
+    fn lazy_arguments(&mut self) -> Result<Vec<Value>, Failure> {
+        let arguments = self.tokens.lazy_arguments()?;
+        Ok(arguments
+            .into_iter()
+            .map(|tokens| {
+                Value::new(Function::new(Deferred {
+                    tokens,
+                    variables: std::rc::Rc::clone(&self.session.variables),
+                    language: std::rc::Rc::clone(&self.session.language),
+                    depth: std::rc::Rc::clone(&self.session.depth),
+                }))
+            })
+            .collect())
     }
 
     fn arguments(&mut self) -> Result<Vec<Value>, Failure> {

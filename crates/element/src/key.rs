@@ -63,7 +63,13 @@ impl Key {
     }
 }
 
-impl crate::Element for Key {}
+impl crate::Element for Key {
+    fn equals(&self, other: &dyn std::any::Any) -> Option<bool> {
+        other
+            .downcast_ref::<Self>()
+            .map(|other| self.modifiers == other.modifiers && self.code() == other.code())
+    }
+}
 
 impl std::fmt::Display for Key {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

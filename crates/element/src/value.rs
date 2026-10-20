@@ -13,4 +13,8 @@ impl Value {
     pub fn cast<T: crate::Element>(&self) -> Option<&T> {
         self.any().downcast_ref()
     }
+
+    pub fn equals(&self, other: &Value) -> Option<bool> {
+        self.0.equals(other.any())
+    }
 }

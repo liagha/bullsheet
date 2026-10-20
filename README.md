@@ -9,7 +9,7 @@ A borderless, always-on-top pop-up calculator for the desktop. Press the global 
 - `Ctrl+Q` quits.
 - Click a result to copy it; `Ctrl`-click it to copy the whole line, as in `2 * (3 + 4) = 14`.
 - `Ctrl`-click any word in the sheet to copy that word.
-- Hover a word to see what it is: a number, a function, a parameter, a text, or an error.
+- Hover a word to see what it is: a number, a function, a parameter, a text, a key, a true or false, or an error.
 - Start typing a name and a list of matches appears; arrow keys pick one, `Enter` or `Tab` inserts it, `Escape` dismisses it.
 - Drag the top strip to move the window.
 - The hotkey can be changed from the sheet: `shortcut(Ctrl+Alt+B)`.
@@ -56,7 +56,10 @@ On launch the app checks the latest GitHub release in the background. If a newer
 - Every operation is a value: operators have names (`add`, `subtract`, `multiply`, `divide`, `mod`, `pow`, `negate`, `factorial`, `percentage`) and symbols work as values too, so `plus = +` gives you `plus(3, 4)`, and `sine = sin` gives you `sine(1)`.
 - Settings are values too: `shortcut(Ctrl+Alt+B)`, `autostart(true)`, `version()`, and `update()` live in the sheet instead of a settings page.
 - Keys are values: `Ctrl+Alt+C` on its own line is a key, `Ctrl+Alt+C+Shift` adds a modifier, and `shortcut(Ctrl+Alt+B)` takes one. `Ctrl+1` works for digits.
-- Booleans are values: `true`, `false`, `not(x)`, `and(x, y)`, `or(x, y)`, and `equal`, `not_equal`, `less`, `greater`, `less_or_equal`, `greater_or_equal` for numbers.
+- Booleans are values: `true`, `false`, `not(x)`, `and(x, y)`, `or(x, y)`, and `equal`, `not_equal`, `less`, `greater`, `less_or_equal`, `greater_or_equal`.
+- Comparisons are symbols too: `1 + 2 == 3`, `x != 8`, `2 * 3 + 1 < 8`, `4 >= 4`. Equality works on any two values, including keys and text; the four orderings are numbers only.
+- `if(condition, then, else)` takes three expressions and evaluates only the one it chooses, so `if(x == 0, 0, 1 / x)` is safe and `f(n) = if(n == 0, 1, n * f(n - 1))` terminates.
+- `=` still means only one thing: a line with a single `=` assigns or defines, and `==` is the comparison.
 - Constants `pi`, `tau`, `e`, `phi`, `deg`, `inf`, `true`, and `false`.
 - Persian and Arabic-Indic digits and common math symbols are normalized.
 

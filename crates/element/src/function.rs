@@ -15,4 +15,8 @@ impl Function {
     pub fn call(&self, arguments: &[crate::Value]) -> Result<crate::Value, crate::Failure> {
         self.0.call(arguments)
     }
+
+    pub fn lazy(&self) -> bool {
+        self.0.lazy()
+    }
 }

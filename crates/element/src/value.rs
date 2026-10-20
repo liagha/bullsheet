@@ -14,6 +14,10 @@ impl Value {
         self.any().downcast_ref()
     }
 
+    pub fn describe(&self) -> crate::Text {
+        self.0.describe()
+    }
+
     pub fn equals(&self, other: &Value) -> Option<bool> {
         self.0.equals(other.any())
     }

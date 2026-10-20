@@ -192,8 +192,6 @@ impl<'a> Surface<'a> {
                         .collect();
             }
         });
-        // egui has no bidi and shapes Arabic-script runs right to left, so Persian digits would
-        // draw mirrored; the buffer keeps the Latin form.
         eframe::egui::CompletionPopup::new(ui.scope_id().with("source"))
             .word_boundary(|character| !(character.is_ascii_alphanumeric() || character == '_'))
             .align(eframe::egui::RectAlign::BOTTOM_START)
@@ -231,11 +229,8 @@ impl<'a> Surface<'a> {
             .take(8)
             .map(|name| {
                 let text = name.text().as_ref();
-                let kind = self
-                    .renderers
-                    .render(name.value())
-                    .map_or("", |shown| shown.kind);
-                eframe::egui::Suggestion::new(text).description(kind)
+                let description = name.value().describe();
+                eframe::egui::Suggestion::new(text).description(description.as_ref())
             })
             .collect()
     }

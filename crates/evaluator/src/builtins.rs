@@ -1,7 +1,7 @@
 use crate::lexer::Glyph;
 use crate::parser::{Associativity, Fixity, Grammar, Precedence};
-use crate::{Arguments, Arity, Identifier, Name};
-use element::{Callable, Failure, Function, Key, Number, Text, Truth, Value};
+use crate::registry::Registry;
+use element::{Arity, Arguments, Callable, Failure, Function, Key, Number, Text, Truth, Value};
 
 pub struct Operator {
     function: Function,
@@ -10,9 +10,9 @@ pub struct Operator {
 }
 
 impl Operator {
-    fn new(callable: impl Callable, precedence: Precedence, associativity: Associativity) -> Self {
+    fn new(function: Function, precedence: Precedence, associativity: Associativity) -> Self {
         Self {
-            function: Function::new(callable),
+            function,
             precedence,
             associativity,
         }
@@ -30,9 +30,12 @@ impl Callable for Positive {
         Text::new("positive")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(arguments.number(0)?))
     }
 }
@@ -44,9 +47,12 @@ impl Callable for Negation {
         Text::new("negate")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(-arguments.number(0)?.value())))
     }
 }
@@ -58,9 +64,12 @@ impl Callable for Addition {
         Text::new("add")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         if let (Some(left), Some(right)) = (values[0].cast::<Text>(), values[1].cast::<Text>()) {
             return Ok(Value::new(Text::new(format!("{left}{right}"))));
         }
@@ -99,9 +108,12 @@ impl Callable for Subtraction {
         Text::new("subtract")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value() - right.value())))
     }
@@ -114,9 +126,12 @@ impl Callable for Multiplication {
         Text::new("multiply")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value() * right.value())))
     }
@@ -129,12 +144,17 @@ impl Callable for Division {
         Text::new("divide")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         if right.value() == 0.0 {
-            return Err(Failure::new("division by zero"));
+            return Err(Failure::ZeroDivisor {
+                operation: Text::new("division"),
+            });
         }
         Ok(Value::new(Number::new(left.value() / right.value())))
     }
@@ -147,12 +167,17 @@ impl Callable for Modulo {
         Text::new("mod")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         if right.value() == 0.0 {
-            return Err(Failure::new("remainder by zero"));
+            return Err(Failure::ZeroDivisor {
+                operation: Text::new("remainder"),
+            });
         }
         Ok(Value::new(Number::new(left.value() % right.value())))
     }
@@ -165,9 +190,12 @@ impl Callable for Power {
         Text::new("pow")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value().powf(right.value()))))
     }
@@ -180,12 +208,18 @@ impl Callable for Factorial {
         Text::new("factorial")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value < 0.0 || value.fract() != 0.0 {
-            return Err(Failure::new("factorial requires a non-negative integer"));
+            return Err(Failure::Domain {
+                name: Text::new("factorial"),
+                requirement: Text::new("a non-negative integer"),
+            });
         }
         if value > 170.0 {
             return Err(Failure::new("factorial is too large"));
@@ -205,9 +239,12 @@ impl Callable for Percentage {
         Text::new("percentage")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(
             arguments.number(0)?.value() / 100.0,
         )))
@@ -221,9 +258,12 @@ impl Callable for LogicalNot {
         Text::new("not")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Truth::new(!arguments.truth(0)?)))
     }
 }
@@ -235,9 +275,12 @@ impl Callable for LogicalAnd {
         Text::new("and")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         Ok(Value::new(Truth::new(
             arguments.truth(0)? && arguments.truth(1)?,
         )))
@@ -251,9 +294,12 @@ impl Callable for LogicalOr {
         Text::new("or")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         Ok(Value::new(Truth::new(
             arguments.truth(0)? || arguments.truth(1)?,
         )))
@@ -265,27 +311,17 @@ struct Comparison {
     compare: fn(f64, f64) -> bool,
 }
 
-const COMPARISONS: [(Glyph, &str, fn(f64, f64) -> bool); 4] = [
-    (Glyph::LESS, "less", |left, right| left < right),
-    (Glyph::GREATER, "greater", |left, right| left > right),
-    (Glyph::LESS_OR_EQUAL, "less_or_equal", |left, right| {
-        left <= right
-    }),
-    (
-        Glyph::GREATER_OR_EQUAL,
-        "greater_or_equal",
-        |left, right| left >= right,
-    ),
-];
-
 impl Callable for Comparison {
     fn name(&self) -> Text {
         Text::new(self.name)
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Truth::new((self.compare)(
             left.value(),
@@ -301,8 +337,11 @@ impl Callable for Equality {
         Text::new("equal")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        Arguments::new(values).expect(&self.name(), Arity::exactly(2))?;
         let same = values[0]
             .equals(&values[1])
             .ok_or_else(|| Failure::new("these values cannot be compared"))?;
@@ -317,8 +356,11 @@ impl Callable for Inequality {
         Text::new("not_equal")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        Arguments::new(values).expect(&self.name(), Arity::exactly(2))?;
         let same = values[0]
             .equals(&values[1])
             .ok_or_else(|| Failure::new("these values cannot be compared"))?;
@@ -333,13 +375,15 @@ impl Callable for Conditional {
         Text::new("if")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(3)
+    }
+
     fn lazy(&self) -> bool {
         true
     }
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(3))?;
         let condition = values[0]
             .cast::<Function>()
             .ok_or_else(|| Failure::new("if requires expressions"))?
@@ -363,9 +407,12 @@ impl Callable for Sine {
         Text::new("sin")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().sin())))
     }
 }
@@ -377,9 +424,12 @@ impl Callable for Cosine {
         Text::new("cos")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().cos())))
     }
 }
@@ -391,9 +441,12 @@ impl Callable for Tangent {
         Text::new("tan")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().tan())))
     }
 }
@@ -405,14 +458,18 @@ impl Callable for Arcsine {
         Text::new("asin")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if !(-1.0..=1.0).contains(&value) {
-            return Err(Failure::new(
-                "arcsine requires a number between minus one and one",
-            ));
+            return Err(Failure::Domain {
+                name: Text::new("asin"),
+                requirement: Text::new("a number between minus one and one"),
+            });
         }
         Ok(Value::new(Number::new(value.asin())))
     }
@@ -425,14 +482,18 @@ impl Callable for Arccosine {
         Text::new("acos")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if !(-1.0..=1.0).contains(&value) {
-            return Err(Failure::new(
-                "arccosine requires a number between minus one and one",
-            ));
+            return Err(Failure::Domain {
+                name: Text::new("acos"),
+                requirement: Text::new("a number between minus one and one"),
+            });
         }
         Ok(Value::new(Number::new(value.acos())))
     }
@@ -445,9 +506,12 @@ impl Callable for Arctangent {
         Text::new("atan")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         Ok(Value::new(Number::new(value.atan())))
     }
@@ -460,9 +524,12 @@ impl Callable for Arctangent2 {
         Text::new("atan2")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value().atan2(right.value()))))
     }
@@ -475,9 +542,12 @@ impl Callable for HyperbolicSine {
         Text::new("sinh")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().sinh())))
     }
 }
@@ -489,9 +559,12 @@ impl Callable for HyperbolicCosine {
         Text::new("cosh")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().cosh())))
     }
 }
@@ -503,9 +576,12 @@ impl Callable for HyperbolicTangent {
         Text::new("tanh")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().tanh())))
     }
 }
@@ -517,12 +593,18 @@ impl Callable for SquareRoot {
         Text::new("sqrt")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value < 0.0 {
-            return Err(Failure::new("square root requires a non-negative number"));
+            return Err(Failure::Domain {
+                name: Text::new("sqrt"),
+                requirement: Text::new("a non-negative number"),
+            });
         }
         Ok(Value::new(Number::new(value.sqrt())))
     }
@@ -535,9 +617,12 @@ impl Callable for CubeRoot {
         Text::new("cbrt")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().cbrt())))
     }
 }
@@ -549,9 +634,12 @@ impl Callable for Absolute {
         Text::new("abs")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().abs())))
     }
 }
@@ -563,12 +651,18 @@ impl Callable for NaturalLogarithm {
         Text::new("ln")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
-            return Err(Failure::new("logarithm requires a positive number"));
+            return Err(Failure::Domain {
+                name: Text::new("ln"),
+                requirement: Text::new("a positive number"),
+            });
         }
         Ok(Value::new(Number::new(value.ln())))
     }
@@ -581,19 +675,28 @@ impl Callable for Logarithm {
         Text::new("log")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::between(1, 2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::between(1, 2))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
-            return Err(Failure::new("logarithm requires a positive number"));
+            return Err(Failure::Domain {
+                name: Text::new("log"),
+                requirement: Text::new("a positive number"),
+            });
         }
         let result = if arguments.len() == 1 {
             value.log10()
         } else {
             let base = arguments.number(1)?.value();
             if base <= 0.0 || base == 1.0 {
-                return Err(Failure::new("logarithm base must be positive and not one"));
+                return Err(Failure::Domain {
+                    name: Text::new("log"),
+                    requirement: Text::new("a base that is positive and not one"),
+                });
             }
             value.log(base)
         };
@@ -608,12 +711,18 @@ impl Callable for BinaryLogarithm {
         Text::new("log2")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
-            return Err(Failure::new("logarithm requires a positive number"));
+            return Err(Failure::Domain {
+                name: Text::new("log2"),
+                requirement: Text::new("a positive number"),
+            });
         }
         Ok(Value::new(Number::new(value.log2())))
     }
@@ -626,12 +735,18 @@ impl Callable for DecimalLogarithm {
         Text::new("log10")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         if value <= 0.0 {
-            return Err(Failure::new("logarithm requires a positive number"));
+            return Err(Failure::Domain {
+                name: Text::new("log10"),
+                requirement: Text::new("a positive number"),
+            });
         }
         Ok(Value::new(Number::new(value.log10())))
     }
@@ -644,9 +759,12 @@ impl Callable for Exponential {
         Text::new("exp")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().exp())))
     }
 }
@@ -658,9 +776,12 @@ impl Callable for Floor {
         Text::new("floor")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(
             arguments.number(0)?.value().floor(),
         )))
@@ -674,9 +795,12 @@ impl Callable for Ceiling {
         Text::new("ceil")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(arguments.number(0)?.value().ceil())))
     }
 }
@@ -688,18 +812,22 @@ impl Callable for Round {
         Text::new("round")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::between(1, 2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::between(1, 2))?;
         let value = arguments.number(0)?.value();
         if arguments.len() == 1 {
             return Ok(Value::new(Number::new(value.round())));
         }
         let places = arguments.number(1)?.value();
         if places < 0.0 || places.fract() != 0.0 || places > 15.0 {
-            return Err(Failure::new(
-                "round requires a whole number of places between zero and fifteen",
-            ));
+            return Err(Failure::Domain {
+                name: Text::new("round"),
+                requirement: Text::new("a whole number of places between zero and fifteen"),
+            });
         }
         let factor = 10.0_f64.powi(places as i32);
         Ok(Value::new(Number::new((value * factor).round() / factor)))
@@ -713,9 +841,12 @@ impl Callable for Truncate {
         Text::new("trunc")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         Ok(Value::new(Number::new(
             arguments.number(0)?.value().trunc(),
         )))
@@ -729,9 +860,12 @@ impl Callable for Sign {
         Text::new("sign")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(1))?;
         let value = arguments.number(0)?.value();
         let sign = if value == 0.0 { 0.0 } else { value.signum() };
         Ok(Value::new(Number::new(sign)))
@@ -745,9 +879,12 @@ impl Callable for Minimum {
         Text::new("min")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::at_least(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::at_least(1))?;
         let numbers = arguments.numbers()?;
         let minimum = numbers
             .iter()
@@ -764,9 +901,12 @@ impl Callable for Maximum {
         Text::new("max")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::at_least(1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::at_least(1))?;
         let numbers = arguments.numbers()?;
         let maximum = numbers
             .iter()
@@ -783,9 +923,12 @@ impl Callable for Hypotenuse {
         Text::new("hypot")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(2)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(2))?;
         let (left, right) = (arguments.number(0)?, arguments.number(1)?);
         Ok(Value::new(Number::new(left.value().hypot(right.value()))))
     }
@@ -797,74 +940,107 @@ pub struct Operators {
     postfixes: std::collections::HashMap<Glyph, Operator>,
 }
 
+const PREFIXES: [(Glyph, &str, Precedence); 2] = [
+    (Glyph::PLUS, "positive", Precedence::PREFIX),
+    (Glyph::MINUS, "negate", Precedence::PREFIX),
+];
+
+const INFIXES: [(Glyph, &str, Precedence, Associativity); 8] = [
+    (Glyph::PLUS, "add", Precedence::ADDITION, Associativity::Left),
+    (Glyph::MINUS, "subtract", Precedence::ADDITION, Associativity::Left),
+    (
+        Glyph::STAR,
+        "multiply",
+        Precedence::MULTIPLICATION,
+        Associativity::Left,
+    ),
+    (
+        Glyph::SLASH,
+        "divide",
+        Precedence::MULTIPLICATION,
+        Associativity::Left,
+    ),
+    (
+        Glyph::PERCENT,
+        "mod",
+        Precedence::MULTIPLICATION,
+        Associativity::Left,
+    ),
+    (Glyph::CARET, "pow", Precedence::POWER, Associativity::Right),
+    (Glyph::EQUAL, "equal", Precedence::COMPARISON, Associativity::Left),
+    (
+        Glyph::NOT_EQUAL,
+        "not_equal",
+        Precedence::COMPARISON,
+        Associativity::Left,
+    ),
+];
+
+const COMPARISONS: [(Glyph, &str, Precedence, Associativity, fn(f64, f64) -> bool); 4] = [
+    (
+        Glyph::LESS,
+        "less",
+        Precedence::COMPARISON,
+        Associativity::Left,
+        |left, right| left < right,
+    ),
+    (
+        Glyph::GREATER,
+        "greater",
+        Precedence::COMPARISON,
+        Associativity::Left,
+        |left, right| left > right,
+    ),
+    (
+        Glyph::LESS_OR_EQUAL,
+        "less_or_equal",
+        Precedence::COMPARISON,
+        Associativity::Left,
+        |left, right| left <= right,
+    ),
+    (
+        Glyph::GREATER_OR_EQUAL,
+        "greater_or_equal",
+        Precedence::COMPARISON,
+        Associativity::Left,
+        |left, right| left >= right,
+    ),
+];
+
+const POSTFIXES: [(Glyph, &str, Precedence); 2] = [
+    (Glyph::BANG, "factorial", Precedence::POSTFIX),
+    (Glyph::PERCENT, "percentage", Precedence::POSTFIX),
+];
+
 impl Operators {
-    pub fn new() -> Self {
-        use std::collections::HashMap;
-        let mut prefixes = HashMap::new();
-        prefixes.insert(
-            Glyph::PLUS,
-            Operator::new(Positive, Precedence::PREFIX, Associativity::None),
-        );
-        prefixes.insert(
-            Glyph::MINUS,
-            Operator::new(Negation, Precedence::PREFIX, Associativity::None),
-        );
-        let mut infixes = HashMap::new();
-        infixes.insert(
-            Glyph::PLUS,
-            Operator::new(Addition, Precedence::ADDITION, Associativity::Left),
-        );
-        infixes.insert(
-            Glyph::MINUS,
-            Operator::new(Subtraction, Precedence::ADDITION, Associativity::Left),
-        );
-        infixes.insert(
-            Glyph::STAR,
-            Operator::new(
-                Multiplication,
-                Precedence::MULTIPLICATION,
-                Associativity::Left,
-            ),
-        );
-        infixes.insert(
-            Glyph::SLASH,
-            Operator::new(Division, Precedence::MULTIPLICATION, Associativity::Left),
-        );
-        infixes.insert(
-            Glyph::PERCENT,
-            Operator::new(Modulo, Precedence::MULTIPLICATION, Associativity::Left),
-        );
-        infixes.insert(
-            Glyph::CARET,
-            Operator::new(Power, Precedence::POWER, Associativity::Right),
-        );
-        for (symbol, name, compare) in COMPARISONS {
-            infixes.insert(
-                symbol,
-                Operator::new(
-                    Comparison { name, compare },
-                    Precedence::COMPARISON,
-                    Associativity::Left,
-                ),
+    pub fn new(registry: &Registry) -> Self {
+        let mut prefixes = std::collections::HashMap::new();
+        for (glyph, name, precedence) in PREFIXES {
+            prefixes.insert(
+                glyph,
+                Operator::new(registry.function(name), precedence, Associativity::None),
             );
         }
-        infixes.insert(
-            Glyph::EQUAL,
-            Operator::new(Equality, Precedence::COMPARISON, Associativity::Left),
-        );
-        infixes.insert(
-            Glyph::NOT_EQUAL,
-            Operator::new(Inequality, Precedence::COMPARISON, Associativity::Left),
-        );
-        let mut postfixes = HashMap::new();
-        postfixes.insert(
-            Glyph::BANG,
-            Operator::new(Factorial, Precedence::POSTFIX, Associativity::None),
-        );
-        postfixes.insert(
-            Glyph::PERCENT,
-            Operator::new(Percentage, Precedence::POSTFIX, Associativity::None),
-        );
+        let mut infixes = std::collections::HashMap::new();
+        for (glyph, name, precedence, associativity) in INFIXES {
+            infixes.insert(
+                glyph,
+                Operator::new(registry.function(name), precedence, associativity),
+            );
+        }
+        for (glyph, name, precedence, associativity, _) in COMPARISONS {
+            infixes.insert(
+                glyph,
+                Operator::new(registry.function(name), precedence, associativity),
+            );
+        }
+        let mut postfixes = std::collections::HashMap::new();
+        for (glyph, name, precedence) in POSTFIXES {
+            postfixes.insert(
+                glyph,
+                Operator::new(registry.function(name), precedence, Associativity::None),
+            );
+        }
         Self {
             prefixes,
             infixes,
@@ -892,14 +1068,8 @@ impl Operators {
     }
 }
 
-pub struct Constants {
-    values: std::collections::HashMap<Identifier, Value>,
-}
-
-impl Constants {
-    pub fn new() -> Self {
-        use std::collections::HashMap;
-        let mut values = HashMap::new();
+impl Registry {
+    pub fn add_builtins(&mut self) {
         for (name, number) in [
             ("pi", std::f64::consts::PI),
             ("tau", std::f64::consts::TAU),
@@ -908,186 +1078,55 @@ impl Constants {
             ("phi", (1.0 + 5.0_f64.sqrt()) / 2.0),
             ("inf", f64::INFINITY),
         ] {
-            values.insert(Identifier::new(name), Value::new(Number::new(number)));
+            self.add(name, Value::new(Number::new(number)));
         }
-        values.insert(Identifier::new("true"), Value::new(Truth::new(true)));
-        values.insert(Identifier::new("false"), Value::new(Truth::new(false)));
-        Self { values }
-    }
-
-    pub fn find(&self, name: &Identifier) -> Option<Value> {
-        self.values.get(name).cloned()
-    }
-
-    pub fn contains(&self, name: &Identifier) -> bool {
-        self.values.contains_key(name)
-    }
-
-    pub fn names(&self) -> Vec<Name> {
-        let mut names: Vec<Name> = self
-            .values
-            .iter()
-            .map(|(identifier, value)| Name::new(Text::new(identifier.to_string()), value.clone()))
-            .collect();
-        names.sort_by(|left, right| left.text().as_ref().cmp(right.text().as_ref()));
-        names
-    }
-}
-
-pub struct Functions {
-    entries: std::collections::HashMap<Identifier, Value>,
-}
-
-impl Functions {
-    pub fn new() -> Self {
-        use std::collections::HashMap;
-        let mut entries = HashMap::new();
-        entries.insert(
-            Identifier::new("positive"),
-            Value::new(Function::new(Positive)),
-        );
-        entries.insert(
-            Identifier::new("negate"),
-            Value::new(Function::new(Negation)),
-        );
-        entries.insert(Identifier::new("add"), Value::new(Function::new(Addition)));
-        entries.insert(
-            Identifier::new("subtract"),
-            Value::new(Function::new(Subtraction)),
-        );
-        entries.insert(
-            Identifier::new("multiply"),
-            Value::new(Function::new(Multiplication)),
-        );
-        entries.insert(
-            Identifier::new("divide"),
-            Value::new(Function::new(Division)),
-        );
-        entries.insert(Identifier::new("mod"), Value::new(Function::new(Modulo)));
-        entries.insert(Identifier::new("pow"), Value::new(Function::new(Power)));
-        entries.insert(
-            Identifier::new("factorial"),
-            Value::new(Function::new(Factorial)),
-        );
-        entries.insert(
-            Identifier::new("percentage"),
-            Value::new(Function::new(Percentage)),
-        );
-        entries.insert(
-            Identifier::new("not"),
-            Value::new(Function::new(LogicalNot)),
-        );
-        entries.insert(
-            Identifier::new("and"),
-            Value::new(Function::new(LogicalAnd)),
-        );
-        entries.insert(Identifier::new("or"), Value::new(Function::new(LogicalOr)));
-        entries.insert(
-            Identifier::new("equal"),
-            Value::new(Function::new(Equality)),
-        );
-        entries.insert(
-            Identifier::new("not_equal"),
-            Value::new(Function::new(Inequality)),
-        );
-        entries.insert(
-            Identifier::new("if"),
-            Value::new(Function::new(Conditional)),
-        );
-        for (_, name, compare) in COMPARISONS {
-            entries.insert(
-                Identifier::new(name),
-                Value::new(Function::new(Comparison { name, compare })),
-            );
+        self.add("true", Value::new(Truth::new(true)));
+        self.add("false", Value::new(Truth::new(false)));
+        self.add_callable("positive", Positive);
+        self.add_callable("negate", Negation);
+        self.add_callable("add", Addition);
+        self.add_callable("subtract", Subtraction);
+        self.add_callable("multiply", Multiplication);
+        self.add_callable("divide", Division);
+        self.add_callable("mod", Modulo);
+        self.add_callable("pow", Power);
+        self.add_callable("factorial", Factorial);
+        self.add_callable("percentage", Percentage);
+        self.add_callable("not", LogicalNot);
+        self.add_callable("and", LogicalAnd);
+        self.add_callable("or", LogicalOr);
+        self.add_callable("equal", Equality);
+        self.add_callable("not_equal", Inequality);
+        self.add_callable("if", Conditional);
+        for (_, name, _, _, compare) in COMPARISONS {
+            self.add_callable(name, Comparison { name, compare });
         }
-        entries.insert(Identifier::new("sin"), Value::new(Function::new(Sine)));
-        entries.insert(Identifier::new("cos"), Value::new(Function::new(Cosine)));
-        entries.insert(Identifier::new("tan"), Value::new(Function::new(Tangent)));
-        entries.insert(Identifier::new("asin"), Value::new(Function::new(Arcsine)));
-        entries.insert(
-            Identifier::new("acos"),
-            Value::new(Function::new(Arccosine)),
-        );
-        entries.insert(
-            Identifier::new("atan"),
-            Value::new(Function::new(Arctangent)),
-        );
-        entries.insert(
-            Identifier::new("atan2"),
-            Value::new(Function::new(Arctangent2)),
-        );
-        entries.insert(
-            Identifier::new("sinh"),
-            Value::new(Function::new(HyperbolicSine)),
-        );
-        entries.insert(
-            Identifier::new("cosh"),
-            Value::new(Function::new(HyperbolicCosine)),
-        );
-        entries.insert(
-            Identifier::new("tanh"),
-            Value::new(Function::new(HyperbolicTangent)),
-        );
-        entries.insert(
-            Identifier::new("sqrt"),
-            Value::new(Function::new(SquareRoot)),
-        );
-        entries.insert(Identifier::new("cbrt"), Value::new(Function::new(CubeRoot)));
-        entries.insert(Identifier::new("abs"), Value::new(Function::new(Absolute)));
-        entries.insert(
-            Identifier::new("ln"),
-            Value::new(Function::new(NaturalLogarithm)),
-        );
-        entries.insert(Identifier::new("log"), Value::new(Function::new(Logarithm)));
-        entries.insert(
-            Identifier::new("log2"),
-            Value::new(Function::new(BinaryLogarithm)),
-        );
-        entries.insert(
-            Identifier::new("log10"),
-            Value::new(Function::new(DecimalLogarithm)),
-        );
-        entries.insert(
-            Identifier::new("exp"),
-            Value::new(Function::new(Exponential)),
-        );
-        entries.insert(Identifier::new("floor"), Value::new(Function::new(Floor)));
-        entries.insert(Identifier::new("ceil"), Value::new(Function::new(Ceiling)));
-        entries.insert(Identifier::new("round"), Value::new(Function::new(Round)));
-        entries.insert(
-            Identifier::new("trunc"),
-            Value::new(Function::new(Truncate)),
-        );
-        entries.insert(Identifier::new("sign"), Value::new(Function::new(Sign)));
-        entries.insert(Identifier::new("min"), Value::new(Function::new(Minimum)));
-        entries.insert(Identifier::new("max"), Value::new(Function::new(Maximum)));
-        entries.insert(
-            Identifier::new("hypot"),
-            Value::new(Function::new(Hypotenuse)),
-        );
-        Self { entries }
-    }
-
-    pub fn find(&self, name: &Identifier) -> Option<Value> {
-        self.entries.get(name).cloned()
-    }
-
-    pub fn contains(&self, name: &Identifier) -> bool {
-        self.entries.contains_key(name)
-    }
-
-    pub fn names(&self) -> Vec<Name> {
-        let mut names: Vec<Name> = self
-            .entries
-            .iter()
-            .map(|(identifier, value)| Name::new(Text::new(identifier.to_string()), value.clone()))
-            .collect();
-        names.sort_by(|left, right| left.text().as_ref().cmp(right.text().as_ref()));
-        names
-    }
-
-    pub fn learn(&mut self, name: Identifier, value: Value) {
-        self.entries.insert(name, value);
+        self.add_callable("sin", Sine);
+        self.add_callable("cos", Cosine);
+        self.add_callable("tan", Tangent);
+        self.add_callable("asin", Arcsine);
+        self.add_callable("acos", Arccosine);
+        self.add_callable("atan", Arctangent);
+        self.add_callable("atan2", Arctangent2);
+        self.add_callable("sinh", HyperbolicSine);
+        self.add_callable("cosh", HyperbolicCosine);
+        self.add_callable("tanh", HyperbolicTangent);
+        self.add_callable("sqrt", SquareRoot);
+        self.add_callable("cbrt", CubeRoot);
+        self.add_callable("abs", Absolute);
+        self.add_callable("ln", NaturalLogarithm);
+        self.add_callable("log", Logarithm);
+        self.add_callable("log2", BinaryLogarithm);
+        self.add_callable("log10", DecimalLogarithm);
+        self.add_callable("exp", Exponential);
+        self.add_callable("floor", Floor);
+        self.add_callable("ceil", Ceiling);
+        self.add_callable("round", Round);
+        self.add_callable("trunc", Truncate);
+        self.add_callable("sign", Sign);
+        self.add_callable("min", Minimum);
+        self.add_callable("max", Maximum);
+        self.add_callable("hypot", Hypotenuse);
     }
 }
 

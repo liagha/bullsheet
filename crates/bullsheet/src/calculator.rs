@@ -154,7 +154,11 @@ impl crate::station::Station for Calculator {
                 if let Some((part, text)) = hovered {
                     let tip = match renderers.render(part.value()) {
                         Some(shown) => {
-                            format!("{} {} — ctrl-click copies", shown.kind, shown.text)
+                            format!(
+                                "{} {} — ctrl-click copies",
+                                part.value().describe(),
+                                shown.text
+                            )
                         }
                         None => text.clone(),
                     };

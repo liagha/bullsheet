@@ -5,6 +5,10 @@ impl crate::Element for Number {
     fn equals(&self, other: &dyn std::any::Any) -> Option<bool> {
         other.downcast_ref::<Self>().map(|other| self.0 == other.0)
     }
+
+    fn describe(&self) -> crate::Text {
+        crate::Text::new("a number")
+    }
 }
 
 impl Number {

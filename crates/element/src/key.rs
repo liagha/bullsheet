@@ -69,6 +69,10 @@ impl crate::Element for Key {
             .downcast_ref::<Self>()
             .map(|other| self.modifiers == other.modifiers && self.code() == other.code())
     }
+
+    fn describe(&self) -> crate::Text {
+        crate::Text::new("a key")
+    }
 }
 
 impl std::fmt::Display for Key {

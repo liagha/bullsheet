@@ -59,7 +59,7 @@ On launch the app checks the latest GitHub release in the background. If a newer
 - Booleans are values: `true`, `false`, `not(x)`, `and(x, y)`, `or(x, y)`, and `equal`, `not_equal`, `less`, `greater`, `less_or_equal`, `greater_or_equal`.
 - Comparisons are symbols too: `1 + 2 == 3`, `x != 8`, `2 * 3 + 1 < 8`, `4 >= 4`. Equality works on any two values, including keys and text; the four orderings are numbers only.
 - `if(condition, then, else)` takes three expressions and evaluates only the one it chooses, so `if(x == 0, 0, 1 / x)` is safe and `f(n) = if(n == 0, 1, n * f(n - 1))` terminates.
-- `=` still means only one thing: a line with a single `=` assigns or defines, and `==` is the comparison.
+- `=` binds a name to a value, the same way `+` binds two numbers. It is the loosest operator, so it has to sit at the outermost level of the line: `x = 1 + 2` binds `x` to `3`, and `(x = 1)` is an error. `==` is the comparison.
 - Constants `pi`, `tau`, `e`, `phi`, `deg`, `inf`, `true`, and `false`.
 - Persian and Arabic-Indic digits and common math symbols are normalized.
 

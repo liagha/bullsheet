@@ -1,15 +1,17 @@
 mod builtins;
 mod lexer;
 mod parser;
+mod registry;
 mod syntax;
 
 pub use crate::syntax::Source;
 
-use crate::builtins::{Constants, Functions, Operator, Operators};
+use crate::builtins::{Operator, Operators};
 use crate::lexer::{Glyph, Lexer};
 use crate::parser::{Parser, Shape, ShapeKind};
-use crate::syntax::{Expression, Identifier, Line, Span, Statement};
-use element::{Blank, Callable, Failure, Function, Number, Text, Truth, Value};
+use crate::registry::Registry;
+use crate::syntax::{Expression, Identifier, Line, Span};
+use element::{Arity, Blank, Callable, Failure, Function, Number, Parameter, Text, Value};
 
 #[derive(Clone)]
 pub struct Part {
@@ -39,15 +41,6 @@ impl Reading {
 
     fn without_parts(value: Value) -> Self {
         Self::new(value, Vec::new())
-    }
-
-    fn replace(&mut self, value: Value) {
-        self.value = value;
-    }
-
-    fn prefix(&mut self, mut parts: Vec<Part>) {
-        parts.append(&mut self.parts);
-        self.parts = parts;
     }
 
     pub fn value(&self) -> &Value {
@@ -119,129 +112,28 @@ impl<'a> IntoIterator for &'a Readings {
     }
 }
 
-struct Arguments<'a>(&'a [Value]);
-
-impl<'a> Arguments<'a> {
-    fn new(values: &'a [Value]) -> Self {
-        Self(values)
-    }
-
-    fn expect(&self, name: &Text, arity: Arity) -> Result<(), Failure> {
-        if arity.accepts(self.0) {
-            Ok(())
-        } else {
-            Err(Failure::new(format!("{} expects {}", name.as_ref(), arity)))
-        }
-    }
-
-    fn number(&self, index: usize) -> Result<Number, Failure> {
-        self.0
-            .get(index)
-            .and_then(|value| value.cast::<Number>())
-            .copied()
-            .ok_or_else(|| Failure::new("expected a number"))
-    }
-
-    fn truth(&self, index: usize) -> Result<bool, Failure> {
-        self.0
-            .get(index)
-            .and_then(|value| value.cast::<Truth>())
-            .map(|truth| truth.value())
-            .ok_or_else(|| Failure::new("expected true or false"))
-    }
-
-    fn numbers(&self) -> Result<Vec<Number>, Failure> {
-        self.0
-            .iter()
-            .map(|value| {
-                value
-                    .cast::<Number>()
-                    .copied()
-                    .ok_or_else(|| Failure::new("expected a number"))
-            })
-            .collect()
-    }
-}
-
-impl<'a> std::ops::Deref for Arguments<'a> {
-    type Target = [Value];
-
-    fn deref(&self) -> &Self::Target {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Arity {
-    minimum: usize,
-    maximum: Option<usize>,
-}
-
-impl Arity {
-    fn exactly(count: usize) -> Self {
-        Self {
-            minimum: count,
-            maximum: Some(count),
-        }
-    }
-
-    fn between(minimum: usize, maximum: usize) -> Self {
-        Self {
-            minimum,
-            maximum: Some(maximum),
-        }
-    }
-
-    fn at_least(minimum: usize) -> Self {
-        Self {
-            minimum,
-            maximum: None,
-        }
-    }
-
-    fn accepts(self, values: &[Value]) -> bool {
-        values.len() >= self.minimum && self.maximum.is_none_or(|maximum| values.len() <= maximum)
-    }
-
-    fn counted(count: usize) -> String {
-        format!("{count} argument{}", if count == 1 { "" } else { "s" })
-    }
-}
-
-impl std::fmt::Display for Arity {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.maximum {
-            Some(maximum) if maximum == self.minimum => {
-                write!(formatter, "{}", Self::counted(self.minimum))
-            }
-            Some(maximum) => write!(formatter, "{} or {}", self.minimum, Self::counted(maximum)),
-            None => write!(formatter, "at least {}", Self::counted(self.minimum)),
-        }
-    }
-}
-
 struct Variables {
     values: std::collections::HashMap<Identifier, Value>,
     parent: Option<std::rc::Rc<std::cell::RefCell<Variables>>>,
 }
 
 struct Language {
-    constants: Constants,
-    functions: Functions,
+    registry: Registry,
     operators: Operators,
 }
 
 impl Language {
-    fn new() -> Self {
-        Self {
-            constants: Constants::new(),
-            functions: Functions::new(),
-            operators: Operators::new(),
+    fn new(installed: &[(Identifier, Value)]) -> Self {
+        let mut registry = Registry::new();
+        registry.add_builtins();
+        for (name, value) in installed {
+            registry.add(&name.to_string(), value.clone());
         }
-    }
-
-    fn learn(&mut self, name: Identifier, value: Value) {
-        self.functions.learn(name, value);
+        let operators = Operators::new(&registry);
+        Self {
+            registry,
+            operators,
+        }
     }
 }
 
@@ -272,13 +164,12 @@ impl Session {
         if let Some(value) = self.variable(name) {
             return Ok(value);
         }
-        if let Some(value) = self.language.functions.find(name) {
-            return Ok(value);
+        if let Some(value) = self.language.registry.find(name) {
+            return Ok(value.clone());
         }
-        if let Some(value) = self.language.constants.find(name) {
-            return Ok(value);
-        }
-        Err(Failure::new(format!("unknown name {name}")))
+        Err(Failure::UnknownName {
+            name: Text::new(name.to_string()),
+        })
     }
 
     fn variable(&self, name: &Identifier) -> Option<Value> {
@@ -294,11 +185,10 @@ impl Session {
     }
 
     fn assign(&self, name: Identifier, value: Value) -> Result<(), Failure> {
-        if name.is_answer()
-            || self.language.constants.contains(&name)
-            || self.language.functions.contains(&name)
-        {
-            return Err(Failure::new(format!("{name} is reserved")));
+        if name.is_answer() || self.language.registry.contains(&name) {
+            return Err(Failure::Reserved {
+                name: Text::new(name.to_string()),
+            });
         }
         self.variables.borrow_mut().values.insert(name, value);
         Ok(())
@@ -328,27 +218,8 @@ impl Session {
             current = borrow.parent.clone();
         }
         names.sort_by(|left, right| left.text.as_ref().cmp(right.text.as_ref()));
-        names.extend(self.language.functions.names());
-        names.extend(self.language.constants.names());
+        names.extend(self.language.registry.names());
         names
-    }
-}
-
-pub struct Parameter {
-    name: Text,
-}
-
-impl element::Element for Parameter {}
-
-impl Parameter {
-    fn new(name: &Identifier) -> Self {
-        Self {
-            name: Text::new(name.to_string()),
-        }
-    }
-
-    pub fn name(&self) -> &Text {
-        &self.name
     }
 }
 
@@ -388,12 +259,14 @@ impl Callable for Symbol {
         Text::new(self.name.to_string())
     }
 
+    fn arity(&self) -> Arity {
+        Arity::exactly(self.parameters.len())
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        let arguments = Arguments::new(values);
-        arguments.expect(&self.name(), Arity::exactly(self.parameters.len()))?;
         let depth = self.depth.get() + 1;
         if depth > 64 {
-            return Err(Failure::new("recursion is too deep"));
+            return Err(Failure::TooDeep);
         }
         self.depth.set(depth);
         let result = self.evaluate(values);
@@ -415,8 +288,11 @@ impl Callable for Thunk {
         Text::new("expression")
     }
 
-    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        Arguments::new(values).expect(&self.name(), Arity::exactly(0))?;
+    fn arity(&self) -> Arity {
+        Arity::exactly(0)
+    }
+
+    fn call(&self, _values: &[Value]) -> Result<Value, Failure> {
         let session = Session {
             variables: std::rc::Rc::clone(&self.variables),
             language: std::rc::Rc::clone(&self.language),
@@ -455,7 +331,7 @@ impl<'a> Evaluator<'a> {
             let recorded = match &result {
                 Ok(value) => Some(value.clone()),
                 Err(failure) if matches!(shape.kind(), ShapeKind::Name(_)) => {
-                    Some(Value::new(Failure::new(failure.to_string())))
+                    Some(Value::new(failure.clone()))
                 }
                 Err(_) => None,
             };
@@ -525,6 +401,7 @@ impl<'a> Evaluator<'a> {
                 let right = self.value(right)?;
                 function.call(&[left, right])
             }
+            ShapeKind::Binding { target, value } => self.binding(target, value),
             ShapeKind::Call {
                 function,
                 arguments,
@@ -552,6 +429,56 @@ impl<'a> Evaluator<'a> {
                 };
                 callable.call(&values)
             }
+        }
+    }
+
+    fn binding(&mut self, target: &Shape, value: &Shape) -> Result<Value, Failure> {
+        match target.kind() {
+            ShapeKind::Name(name) => {
+                let value = self.value(value)?;
+                self.session.assign(name.clone(), value.clone())?;
+                self.record(target, value.clone());
+                Ok(value)
+            }
+            ShapeKind::Call {
+                function,
+                arguments,
+            } => {
+                let name = match function.kind() {
+                    ShapeKind::Name(name) => name.clone(),
+                    _ => return Err(Failure::new("a binding needs a name")),
+                };
+                let mut parameters = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    match argument.kind() {
+                        ShapeKind::Name(parameter) => {
+                            parameters.push((parameter.clone(), argument.clone()));
+                        }
+                        _ => return Err(Failure::new("a parameter must be a name")),
+                    }
+                }
+                let bound = Value::new(Function::new(Symbol {
+                    name: name.clone(),
+                    parameters: parameters
+                        .iter()
+                        .map(|(parameter, _)| parameter.clone())
+                        .collect(),
+                    body: value.clone(),
+                    scope: std::rc::Rc::downgrade(&self.session.variables),
+                    language: std::rc::Rc::clone(&self.session.language),
+                    depth: std::rc::Rc::clone(&self.session.depth),
+                }));
+                self.session.assign(name, bound.clone())?;
+                self.record(function, bound.clone());
+                for (parameter, shape) in parameters {
+                    self.record(
+                        &shape,
+                        Value::new(Parameter::new(Text::new(parameter.to_string()))),
+                    );
+                }
+                Ok(bound)
+            }
+            _ => Err(Failure::new("a binding needs a name")),
         }
     }
 
@@ -593,26 +520,27 @@ impl<'a> Evaluator<'a> {
 
 pub struct Calculator {
     installed: Vec<(Identifier, Value)>,
+    language: std::rc::Rc<Language>,
 }
 
 impl Calculator {
     pub fn new() -> Self {
+        let installed = Vec::new();
+        let language = std::rc::Rc::new(Language::new(&installed));
         Self {
-            installed: Vec::new(),
+            installed,
+            language,
         }
     }
 
     pub fn install(&mut self, name: &str, function: Function) {
         self.installed
             .push((Identifier::new(name), Value::new(function)));
+        self.language = std::rc::Rc::new(Language::new(&self.installed));
     }
 
     pub fn evaluate(&self, source: &Source) -> Readings {
-        let mut language = Language::new();
-        for (name, value) in &self.installed {
-            language.learn(name.clone(), value.clone());
-        }
-        let session = Session::new(std::rc::Rc::new(language));
+        let session = Session::new(std::rc::Rc::clone(&self.language));
         let mut readings = Vec::with_capacity(source.line_count());
         readings.extend(
             source
@@ -623,77 +551,15 @@ impl Calculator {
     }
 
     fn evaluate_line(&self, line: Line<'_>, session: &Session) -> Reading {
-        match line.statement() {
-            Ok(Statement::Empty) => Reading::without_parts(Value::new(Blank::new())),
-            Ok(Statement::Expression(expression)) => {
-                let reading = self.evaluate_expression(&expression, session);
-                if reading.value().cast::<Failure>().is_none() {
-                    session.remember(reading.value().clone());
-                }
-                reading
-            }
-            Ok(Statement::Assignment {
-                name,
-                span,
-                expression,
-            }) => {
-                let mut reading = self.evaluate_expression(&expression, session);
-                if reading.value().cast::<Failure>().is_none() {
-                    match session.assign(name, reading.value().clone()) {
-                        Ok(()) => {
-                            session.remember(reading.value().clone());
-                            let value = reading.value().clone();
-                            reading.prefix(vec![Part { span, value }]);
-                        }
-                        Err(failure) => reading.replace(Value::new(failure)),
-                    }
-                }
-                reading
-            }
-            Ok(Statement::Definition {
-                name,
-                span,
-                parameters,
-                expression,
-            }) => {
-                let body = match self.parse(&expression, session) {
-                    Ok(body) => body,
-                    Err(failure) => return Reading::without_parts(Value::new(failure)),
-                };
-                let mut names = Vec::with_capacity(parameters.len());
-                let mut parts = Vec::with_capacity(parameters.len() + 1);
-                for (parameter, span) in parameters {
-                    names.push(parameter.clone());
-                    parts.push(Part {
-                        span,
-                        value: Value::new(Parameter::new(&parameter)),
-                    });
-                }
-                let function = Value::new(Function::new(Symbol {
-                    name: name.clone(),
-                    parameters: names,
-                    body,
-                    scope: std::rc::Rc::downgrade(&session.variables),
-                    language: std::rc::Rc::clone(&session.language),
-                    depth: std::rc::Rc::clone(&session.depth),
-                }));
-                parts.insert(
-                    0,
-                    Part {
-                        span,
-                        value: function.clone(),
-                    },
-                );
-                match session.assign(name, function.clone()) {
-                    Ok(()) => {
-                        session.remember(function.clone());
-                        Reading::new(function, parts)
-                    }
-                    Err(failure) => Reading::without_parts(Value::new(failure)),
-                }
-            }
-            Err(failure) => Reading::without_parts(Value::new(failure)),
+        let expression = line.expression();
+        if expression.is_empty() {
+            return Reading::without_parts(Value::new(Blank::new()));
         }
+        let reading = self.evaluate_expression(&expression, session);
+        if reading.value().cast::<Failure>().is_none() {
+            session.remember(reading.value().clone());
+        }
+        reading
     }
 
     fn parse(&self, expression: &Expression, session: &Session) -> Result<Shape, Failure> {

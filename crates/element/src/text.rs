@@ -7,6 +7,10 @@ impl crate::Element for Text {
             .downcast_ref::<Self>()
             .map(|other| self.0 == other.0)
     }
+
+    fn describe(&self) -> crate::Text {
+        crate::Text::new("a text")
+    }
 }
 
 impl Text {
@@ -24,5 +28,17 @@ impl AsRef<str> for Text {
 impl std::fmt::Display for Text {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.0)
+    }
+}
+
+impl From<String> for Text {
+    fn from(text: String) -> Self {
+        Self(text)
+    }
+}
+
+impl From<&str> for Text {
+    fn from(text: &str) -> Self {
+        Self(text.to_string())
     }
 }

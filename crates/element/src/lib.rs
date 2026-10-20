@@ -1,3 +1,4 @@
+mod arguments;
 mod blank;
 mod callable;
 mod element;
@@ -5,17 +6,20 @@ mod failure;
 mod function;
 mod key;
 mod number;
+mod parameter;
 mod text;
 mod truth;
 mod value;
 
+pub use arguments::Arguments;
 pub use blank::Blank;
-pub use callable::Callable;
+pub use callable::{Arity, Callable};
 pub use element::Element;
 pub use failure::Failure;
 pub use function::Function;
 pub use key::{Key, Modifiers};
 pub use number::Number;
+pub use parameter::Parameter;
 pub use text::Text;
 pub use truth::Truth;
 pub use value::Value;

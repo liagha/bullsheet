@@ -12,6 +12,7 @@ impl Glyph {
     pub const PERCENT: Self = Self("%");
     pub const CARET: Self = Self("^");
     pub const BANG: Self = Self("!");
+    pub const ASSIGN: Self = Self("=");
     pub const EQUAL: Self = Self("==");
     pub const NOT_EQUAL: Self = Self("!=");
     pub const LESS: Self = Self("<");
@@ -38,6 +39,7 @@ impl TryFrom<char> for Glyph {
             '%' => Ok(Self::PERCENT),
             '^' => Ok(Self::CARET),
             '!' => Ok(Self::BANG),
+            '=' => Ok(Self::ASSIGN),
             '<' => Ok(Self::LESS),
             '>' => Ok(Self::GREATER),
             _ => Err(Failure::new(format!("unexpected character {character}"))),

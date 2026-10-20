@@ -95,7 +95,6 @@ pub struct Shown {
     pub text: Presentation,
     pub color: eframe::egui::Color32,
     pub plain: Option<Presentation>,
-    pub kind: &'static str,
 }
 
 pub trait Render {
@@ -108,7 +107,6 @@ impl Render for element::Number {
             text: Presentation::number(self.value()),
             color: eframe::egui::Color32::from_rgb(126, 231, 135),
             plain: Some(Presentation::plain(self.value())),
-            kind: "number",
         })
     }
 }
@@ -120,7 +118,6 @@ impl Render for element::Text {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(224, 227, 233),
             plain: Some(text),
-            kind: "text",
         })
     }
 }
@@ -132,7 +129,6 @@ impl Render for element::Truth {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(126, 231, 135),
             plain: Some(text),
-            kind: "truth",
         })
     }
 }
@@ -144,7 +140,6 @@ impl Render for element::Key {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(150, 190, 255),
             plain: Some(text),
-            kind: "key",
         })
     }
 }
@@ -156,7 +151,6 @@ impl Render for element::Function {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(198, 160, 246),
             plain: Some(text),
-            kind: "function",
         })
     }
 }
@@ -167,14 +161,13 @@ impl Render for element::Blank {
     }
 }
 
-impl Render for evaluator::Parameter {
+impl Render for element::Parameter {
     fn render(&self) -> Option<Shown> {
         let text = Presentation::new(self.name().as_ref());
         Some(Shown {
             text: text.clone(),
             color: eframe::egui::Color32::from_rgb(170, 176, 188),
             plain: Some(text),
-            kind: "parameter",
         })
     }
 }
@@ -185,7 +178,6 @@ impl Render for element::Failure {
             text: Presentation::new(self.to_string()),
             color: eframe::egui::Color32::from_rgb(255, 123, 114),
             plain: None,
-            kind: "failure",
         })
     }
 }
@@ -206,7 +198,7 @@ impl Renderers {
         renderers.learn::<element::Function>();
         renderers.learn::<element::Blank>();
         renderers.learn::<element::Failure>();
-        renderers.learn::<evaluator::Parameter>();
+        renderers.learn::<element::Parameter>();
         renderers
     }
 

@@ -1,4 +1,4 @@
-use element::{Callable, Failure, Function, Text, Truth, Value};
+use element::{Arity, Arguments, Callable, Failure, Function, Text, Truth, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -98,13 +98,16 @@ impl Callable for ShortcutSetting {
         Text::new("shortcut")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::between(0, 1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        let key = match values {
-            [] => crate::shortcut::Combination::key(&self.combination.borrow()),
-            [value] => {
-                let key = value
-                    .cast::<element::Key>()
-                    .ok_or_else(|| Failure::new("shortcut requires a key"))?;
+        let arguments = Arguments::new(values);
+        let key = match values.len() {
+            0 => crate::shortcut::Combination::key(&self.combination.borrow()),
+            _ => {
+                let key = arguments.key(0)?;
                 let combination = crate::shortcut::Combination::from_key(key)?;
                 let mut shortcut = self.shortcut.borrow_mut();
                 match shortcut.as_mut() {
@@ -116,7 +119,6 @@ impl Callable for ShortcutSetting {
                 *self.combination.borrow_mut() = combination;
                 key.clone()
             }
-            _ => return Err(Failure::new("shortcut takes one key")),
         };
         Ok(Value::new(key))
     }
@@ -131,26 +133,23 @@ impl Callable for AutostartSetting {
         Text::new("autostart")
     }
 
+    fn arity(&self) -> Arity {
+        Arity::between(0, 1)
+    }
+
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
+        let arguments = Arguments::new(values);
         let autostart = self
             .autostart
             .as_ref()
             .ok_or_else(|| Failure::new("autostart is unavailable"))?;
-        match values {
-            [] => {}
-            [value] => {
-                let truth = value
-                    .cast::<Truth>()
-                    .ok_or_else(|| Failure::new("autostart requires true or false"))?
-                    .value();
-                if truth {
-                    autostart.enable()
-                } else {
-                    autostart.disable()
-                }
-                .map_err(|error| Failure::new(error.to_string()))?;
+        if !arguments.is_empty() {
+            if arguments.truth(0)? {
+                autostart.enable()
+            } else {
+                autostart.disable()
             }
-            _ => return Err(Failure::new("autostart takes one truth")),
+            .map_err(|error| Failure::new(error.to_string()))?;
         }
         Ok(Value::new(Truth::new(autostart.enabled())))
     }
@@ -163,10 +162,11 @@ impl Callable for VersionSetting {
         Text::new("version")
     }
 
-    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        if !values.is_empty() {
-            return Err(Failure::new("version takes no arguments"));
-        }
+    fn arity(&self) -> Arity {
+        Arity::exactly(0)
+    }
+
+    fn call(&self, _values: &[Value]) -> Result<Value, Failure> {
         Ok(Value::new(Text::new(
             crate::update::Version::current().to_string(),
         )))
@@ -182,10 +182,11 @@ impl Callable for UpdateSetting {
         Text::new("update")
     }
 
-    fn call(&self, values: &[Value]) -> Result<Value, Failure> {
-        if !values.is_empty() {
-            return Err(Failure::new("update takes no arguments"));
-        }
+    fn arity(&self) -> Arity {
+        Arity::exactly(0)
+    }
+
+    fn call(&self, _values: &[Value]) -> Result<Value, Failure> {
         let state = self
             .update
             .borrow()

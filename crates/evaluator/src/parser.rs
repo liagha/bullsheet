@@ -6,7 +6,8 @@ use element::{Failure, Key, Number, Text};
 pub struct Precedence(u8);
 
 impl Precedence {
-    pub const LOWEST: Self = Self(0);
+    pub const ASSIGNMENT: Self = Self(0);
+    pub const LOWEST: Self = Self(1);
     pub const COMPARISON: Self = Self(5);
     pub const ADDITION: Self = Self(10);
     pub const MULTIPLICATION: Self = Self(20);
@@ -103,6 +104,10 @@ pub enum ShapeKind {
         left: Box<Shape>,
         right: Box<Shape>,
     },
+    Binding {
+        target: Box<Shape>,
+        value: Box<Shape>,
+    },
     Call {
         function: Box<Shape>,
         arguments: Vec<Shape>,
@@ -130,7 +135,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn shape(&mut self) -> Result<Shape, Failure> {
-        let shape = self.expression(Precedence::LOWEST)?;
+        let shape = self.expression(Precedence::ASSIGNMENT)?;
         if let Some(token) = self.tokens.peek() {
             return Err(Failure::new(format!("unexpected {}", token.kind())));
         }
@@ -145,6 +150,22 @@ impl<'a> Parser<'a> {
                 None => break,
             };
             if let TokenKind::Glyph(glyph) = kind {
+                if glyph == Glyph::ASSIGN {
+                    if Precedence::ASSIGNMENT < minimum {
+                        break;
+                    }
+                    self.tokens.bump();
+                    let value = self.expression(Precedence::ASSIGNMENT)?;
+                    let span = left.span().start..value.span().end;
+                    left = Shape {
+                        span,
+                        kind: ShapeKind::Binding {
+                            target: Box::new(left),
+                            value: Box::new(value),
+                        },
+                    };
+                    continue;
+                }
                 let fixity = self.grammar.fixity(glyph);
                 let remainder = glyph == Glyph::PERCENT
                     && self

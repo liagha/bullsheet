@@ -13,7 +13,7 @@ impl Instance {
             .create(true)
             .read(true)
             .write(true)
-            .open(directory.join("instance.lock"))?;
+            .open(directory.join("bullsheet.lock"))?;
         match file.try_lock() {
             Ok(()) => Ok(Some(Self { file })),
             Err(std::fs::TryLockError::WouldBlock) => Ok(None),

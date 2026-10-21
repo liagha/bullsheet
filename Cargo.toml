@@ -4,7 +4,7 @@ default-members = ["crates/bullsheet"]
 resolver = "3"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -12,6 +12,12 @@ license = "MIT"
 [workspace.dependencies]
 element = { path = "crates/element" }
 evaluator = { path = "crates/evaluator" }
+
+# A copy of masonry_winit 0.4.0 with one change: the graphics device is
+# created with `MemoryHints::MemoryUsage` instead of the default, which keeps
+# the resident footprint of the window down. See crates/masonry_winit/README.md.
+[patch.crates-io]
+masonry_winit = { path = "crates/masonry_winit" }
 
 [profile.release]
 opt-level = 3

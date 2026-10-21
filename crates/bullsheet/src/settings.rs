@@ -1,96 +1,145 @@
-use element::{Arity, Arguments, Callable, Failure, Function, Text, Truth, Value};
-use std::cell::RefCell;
+
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use element::{Arity, Arguments, Callable, Failure, Function, Text, Truth, Value};
+use global_hotkey::GlobalHotKeyManager;
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+
+use crate::autostart::Autostart;
+
+#[derive(Clone)]
 pub struct Settings {
-    combination: Rc<RefCell<crate::shortcut::Combination>>,
-    shortcut: Rc<RefCell<Option<crate::shortcut::Shortcut>>>,
-    autostart: Option<Rc<crate::autostart::Autostart>>,
-    update: Rc<RefCell<Option<String>>>,
+    manager: Option<Rc<GlobalHotKeyManager>>,
+    current: Rc<RefCell<HotKey>>,
+    registered: Rc<Cell<bool>>,
+    autostart: Option<Rc<Autostart>>,
+    autostart_listener: Rc<RefCell<Option<Box<dyn Fn(bool)>>>>,
+    update: crate::update::Update,
 }
 
 impl Settings {
-    pub fn new(
-        combination: crate::shortcut::Combination,
-        shortcut: Option<crate::shortcut::Shortcut>,
-        autostart: Option<crate::autostart::Autostart>,
-    ) -> Self {
+    pub fn new(wake: impl Fn() + Send + 'static) -> Self {
+        let default = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyC);
+        let stored = SettingsFile::shortcut()
+            .and_then(|text| Hotkey::parse(&text))
+            .map(|hotkey| hotkey.0)
+            .unwrap_or(default);
+        let manager = GlobalHotKeyManager::new().ok().map(Rc::new);
+        let registered = manager
+            .as_ref()
+            .is_some_and(|manager| manager.register(stored).is_ok());
         Self {
-            combination: Rc::new(RefCell::new(combination)),
-            shortcut: Rc::new(RefCell::new(shortcut)),
-            autostart: autostart.map(Rc::new),
-            update: Rc::new(RefCell::new(None)),
+            manager,
+            current: Rc::new(RefCell::new(stored)),
+            registered: Rc::new(Cell::new(registered)),
+            autostart: Autostart::new().ok().map(Rc::new),
+            autostart_listener: Rc::new(RefCell::new(None)),
+            update: crate::update::Update::new(wake),
         }
     }
 
-    pub fn install(&self, calculator: &mut evaluator::Calculator, context: &eframe::egui::Context) {
+    pub fn install(&self, calculator: &mut evaluator::Calculator) {
         calculator.install(
             "shortcut",
             Function::new(ShortcutSetting {
-                context: context.clone(),
-                combination: Rc::clone(&self.combination),
-                shortcut: Rc::clone(&self.shortcut),
+                settings: self.clone(),
             }),
         );
         calculator.install(
             "autostart",
             Function::new(AutostartSetting {
-                autostart: self.autostart.clone(),
+                settings: self.clone(),
             }),
         );
         calculator.install("version", Function::new(VersionSetting));
         calculator.install(
             "update",
             Function::new(UpdateSetting {
-                update: Rc::clone(&self.update),
+                update: self.update.clone(),
             }),
         );
     }
 
-    pub fn combination(&self) -> crate::shortcut::Combination {
-        *self.combination.borrow()
+    pub fn on_autostart(&self, listener: impl Fn(bool) + 'static) {
+        *self.autostart_listener.borrow_mut() = Some(Box::new(listener));
+    }
+
+    pub fn text(&self) -> Text {
+        Hotkey::new(*self.current.borrow()).text()
     }
 
     pub fn registered(&self) -> bool {
-        self.shortcut.borrow().is_some()
-    }
-
-    pub fn requested(&self) -> bool {
-        self.shortcut
-            .borrow()
-            .as_ref()
-            .map(|shortcut| shortcut.requested().is_some())
-            .unwrap_or(false)
-    }
-
-    pub fn autostart(&self) -> Option<Rc<crate::autostart::Autostart>> {
-        self.autostart.clone()
+        self.registered.get()
     }
 
     pub fn autostart_enabled(&self) -> bool {
         self.autostart
             .as_ref()
-            .map(|autostart| autostart.enabled())
-            .unwrap_or(false)
+            .is_some_and(|autostart| autostart.enabled())
     }
 
-    pub fn set_update(&self, report: Option<&crate::update::Report>) {
-        *self.update.borrow_mut() = report.map(|report| match report {
-            crate::update::Report::Updated(version) => {
-                format!("updated to {version} — restart to apply")
+    pub fn set_autostart(&self, enabled: bool) -> Result<bool, Failure> {
+        self.autostart(Some(enabled))
+    }
+
+    pub fn update_state(&self) -> Text {
+        self.update.text()
+    }
+
+    fn replace(&self, hotkey: HotKey) -> Result<(), Failure> {
+        let Some(manager) = &self.manager else {
+            return Err(Failure::new("global shortcuts are unavailable"));
+        };
+        let previous = *self.current.borrow();
+        let was_registered = self.registered.get();
+        let _ = manager.unregister(previous);
+        match manager.register(hotkey) {
+            Ok(()) => {
+                *self.current.borrow_mut() = hotkey;
+                self.registered.set(true);
+                SettingsFile::store(&Hotkey::new(hotkey).text());
+                Ok(())
             }
-            crate::update::Report::Current => String::from("up to date"),
-            crate::update::Report::Failed(failure) => {
-                format!("update check failed: {failure}")
+            Err(error) => {
+                let _ = manager.register(previous);
+                self.registered.set(was_registered);
+                Err(Failure::new(error.to_string()))
             }
-        });
+        }
+    }
+
+    fn autostart(&self, value: Option<bool>) -> Result<bool, Failure> {
+        let autostart = self
+            .autostart
+            .as_ref()
+            .ok_or_else(|| Failure::new("autostart is unavailable"))?;
+        if let Some(enabled) = value {
+            if enabled {
+                autostart.enable()
+            } else {
+                autostart.disable()
+            }
+            .map_err(|error| Failure::new(error.to_string()))?;
+        }
+        let enabled = autostart.enabled();
+        if value.is_some()
+            && let Some(listener) = self.autostart_listener.borrow().as_ref()
+        {
+            listener(enabled);
+        }
+        Ok(enabled)
+    }
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self::new(|| {})
     }
 }
 
 struct ShortcutSetting {
-    context: eframe::egui::Context,
-    combination: Rc<RefCell<crate::shortcut::Combination>>,
-    shortcut: Rc<RefCell<Option<crate::shortcut::Shortcut>>>,
+    settings: Settings,
 }
 
 impl Callable for ShortcutSetting {
@@ -104,28 +153,21 @@ impl Callable for ShortcutSetting {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        let key = match values.len() {
-            0 => crate::shortcut::Combination::key(&self.combination.borrow()),
-            _ => {
-                let key = arguments.key(0)?;
-                let combination = crate::shortcut::Combination::from_key(key)?;
-                let mut shortcut = self.shortcut.borrow_mut();
-                match shortcut.as_mut() {
-                    Some(shortcut) => shortcut.replace(combination),
-                    None => crate::shortcut::Shortcut::new(&self.context, combination)
-                        .map(|registered| *shortcut = Some(registered)),
-                }
-                .map_err(|error| Failure::new(error.to_string()))?;
-                *self.combination.borrow_mut() = combination;
-                key.clone()
-            }
+        let key = if values.is_empty() {
+            Hotkey::new(*self.settings.current.borrow()).key()
+        } else {
+            let key = arguments.key(0)?;
+            let hotkey = Hotkey::parse(&Text::new(key.to_string()))
+                .ok_or_else(|| Failure::new("not a key combination"))?;
+            self.settings.replace(hotkey.0)?;
+            key.clone()
         };
         Ok(Value::new(key))
     }
 }
 
 struct AutostartSetting {
-    autostart: Option<Rc<crate::autostart::Autostart>>,
+    settings: Settings,
 }
 
 impl Callable for AutostartSetting {
@@ -139,19 +181,14 @@ impl Callable for AutostartSetting {
 
     fn call(&self, values: &[Value]) -> Result<Value, Failure> {
         let arguments = Arguments::new(values);
-        let autostart = self
-            .autostart
-            .as_ref()
-            .ok_or_else(|| Failure::new("autostart is unavailable"))?;
-        if !arguments.is_empty() {
-            if arguments.truth(0)? {
-                autostart.enable()
-            } else {
-                autostart.disable()
-            }
-            .map_err(|error| Failure::new(error.to_string()))?;
-        }
-        Ok(Value::new(Truth::new(autostart.enabled())))
+        let requested = if values.is_empty() {
+            None
+        } else {
+            Some(arguments.truth(0)?)
+        };
+        Ok(Value::new(Truth::new(
+            self.settings.autostart(requested)?,
+        )))
     }
 }
 
@@ -167,14 +204,12 @@ impl Callable for VersionSetting {
     }
 
     fn call(&self, _values: &[Value]) -> Result<Value, Failure> {
-        Ok(Value::new(Text::new(
-            crate::update::Version::current().to_string(),
-        )))
+        Ok(Value::new(Text::new(env!("CARGO_PKG_VERSION"))))
     }
 }
 
 struct UpdateSetting {
-    update: Rc<RefCell<Option<String>>>,
+    update: crate::update::Update,
 }
 
 impl Callable for UpdateSetting {
@@ -187,11 +222,132 @@ impl Callable for UpdateSetting {
     }
 
     fn call(&self, _values: &[Value]) -> Result<Value, Failure> {
-        let state = self
-            .update
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| String::from("checking"));
-        Ok(Value::new(Text::new(state)))
+        Ok(Value::new(self.update.text()))
+    }
+}
+
+struct Hotkey(HotKey);
+
+impl Hotkey {
+    fn new(hotkey: HotKey) -> Self {
+        Self(hotkey)
+    }
+
+    fn key(&self) -> element::Key {
+        let mut modifiers = element::Modifiers::NONE;
+        for (source, target) in [
+            (Modifiers::CONTROL, element::Modifiers::CONTROL),
+            (Modifiers::ALT, element::Modifiers::ALT),
+            (Modifiers::SHIFT, element::Modifiers::SHIFT),
+            (Modifiers::META, element::Modifiers::SUPER),
+        ] {
+            if self.0.mods.contains(source) {
+                modifiers = modifiers.union(target);
+            }
+        }
+        element::Key::new(modifiers, Self::name(self.0.key))
+    }
+
+    fn text(&self) -> Text {
+        let mut text = String::new();
+        for (modifier, name) in [
+            (Modifiers::CONTROL, "Ctrl"),
+            (Modifiers::ALT, "Alt"),
+            (Modifiers::SHIFT, "Shift"),
+            (Modifiers::META, "Super"),
+        ] {
+            if self.0.mods.contains(modifier) {
+                if !text.is_empty() {
+                    text.push('+');
+                }
+                text.push_str(name);
+            }
+        }
+        if !text.is_empty() {
+            text.push('+');
+        }
+        text.push_str(Self::name(self.0.key).as_ref());
+        Text::new(text)
+    }
+
+    fn parse(text: &Text) -> Option<Self> {
+        let normalized = text
+            .as_ref()
+            .split('+')
+            .map(|part| {
+                let token = part.trim();
+                if token.eq_ignore_ascii_case("ctrl") || token.eq_ignore_ascii_case("control") {
+                    String::from("Ctrl")
+                } else if token.eq_ignore_ascii_case("alt") {
+                    String::from("Alt")
+                } else if token.eq_ignore_ascii_case("shift") {
+                    String::from("Shift")
+                } else if token.eq_ignore_ascii_case("super")
+                    || token.eq_ignore_ascii_case("meta")
+                    || token.eq_ignore_ascii_case("cmd")
+                    || token.eq_ignore_ascii_case("command")
+                {
+                    String::from("Super")
+                } else if token.len() == 1 && token.chars().all(|c| c.is_ascii_alphabetic()) {
+                    format!("Key{}", token.to_ascii_uppercase())
+                } else if token.len() == 1 && token.chars().all(|c| c.is_ascii_digit()) {
+                    format!("Digit{token}")
+                } else if token
+                    .get(..3)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("key"))
+                {
+                    format!("Key{}", &token[3..].to_ascii_uppercase())
+                } else if token
+                    .get(..5)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("digit"))
+                {
+                    format!("Digit{}", &token[5..])
+                } else {
+                    token.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("+");
+        let hotkey: HotKey = normalized.parse().ok()?;
+        (!hotkey.mods.is_empty()).then(|| Self::new(hotkey))
+    }
+
+    fn name(code: Code) -> Text {
+        let name = format!("{code:?}");
+        Text::new(
+            name.strip_prefix("Key")
+                .or_else(|| name.strip_prefix("Digit"))
+                .unwrap_or(&name),
+        )
+    }
+}
+
+struct SettingsFile;
+
+impl SettingsFile {
+    fn path() -> Option<std::path::PathBuf> {
+        let base = directories::BaseDirs::new()?;
+        Some(base.data_dir().join("bullsheet").join("settings"))
+    }
+
+    fn shortcut() -> Option<Text> {
+        let contents = std::fs::read_to_string(Self::path()?).ok()?;
+        contents.lines().find_map(|line| {
+            line.strip_prefix("shortcut")
+                .and_then(|rest| rest.strip_prefix('='))
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(Text::new)
+        })
+    }
+
+    fn store(shortcut: &Text) {
+        let Some(path) = Self::path() else {
+            return;
+        };
+        if let Some(directory) = path.parent() {
+            let _ = std::fs::create_dir_all(directory);
+        }
+        let _ = std::fs::write(path, format!("shortcut = {shortcut}\n"));
     }
 }

@@ -1,20 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod application;
+mod app;
 mod autostart;
-mod calculator;
-mod decorations;
-mod icon;
+mod digits;
+mod fonts;
 mod instance;
-mod popup;
 mod render;
 mod settings;
-mod shortcut;
-mod station;
-mod surface;
-mod tray;
+mod sheet;
 mod update;
+mod word;
+mod writing;
 
-fn main() -> eframe::Result {
-    application::Application::run()
+fn main() {
+    crate::app::Application::run();
 }

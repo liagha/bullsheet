@@ -1,3 +1,6 @@
+
+use masonry::peniko::Color;
+
 #[derive(Clone, Debug)]
 pub struct Presentation(String);
 
@@ -85,15 +88,9 @@ impl AsRef<str> for Presentation {
     }
 }
 
-impl From<String> for Presentation {
-    fn from(text: String) -> Self {
-        Self(text)
-    }
-}
-
 pub struct Shown {
     pub text: Presentation,
-    pub color: eframe::egui::Color32,
+    pub color: Color,
     pub plain: Option<Presentation>,
 }
 
@@ -105,7 +102,7 @@ impl Render for element::Number {
     fn render(&self) -> Option<Shown> {
         Some(Shown {
             text: Presentation::number(self.value()),
-            color: eframe::egui::Color32::from_rgb(126, 231, 135),
+            color: Color::from_rgb8(126, 231, 135),
             plain: Some(Presentation::plain(self.value())),
         })
     }
@@ -116,7 +113,7 @@ impl Render for element::Text {
         let text = Presentation::new(self.as_ref());
         Some(Shown {
             text: text.clone(),
-            color: eframe::egui::Color32::from_rgb(224, 227, 233),
+            color: Color::from_rgb8(224, 227, 233),
             plain: Some(text),
         })
     }
@@ -127,7 +124,7 @@ impl Render for element::Truth {
         let text = Presentation::new(self.value().to_string());
         Some(Shown {
             text: text.clone(),
-            color: eframe::egui::Color32::from_rgb(126, 231, 135),
+            color: Color::from_rgb8(126, 231, 135),
             plain: Some(text),
         })
     }
@@ -138,7 +135,7 @@ impl Render for element::Key {
         let text = Presentation::new(self.to_string());
         Some(Shown {
             text: text.clone(),
-            color: eframe::egui::Color32::from_rgb(150, 190, 255),
+            color: Color::from_rgb8(150, 190, 255),
             plain: Some(text),
         })
     }
@@ -149,7 +146,7 @@ impl Render for element::Function {
         let text = Presentation::new(self.name().as_ref());
         Some(Shown {
             text: text.clone(),
-            color: eframe::egui::Color32::from_rgb(198, 160, 246),
+            color: Color::from_rgb8(198, 160, 246),
             plain: Some(text),
         })
     }
@@ -166,7 +163,7 @@ impl Render for element::Parameter {
         let text = Presentation::new(self.name().as_ref());
         Some(Shown {
             text: text.clone(),
-            color: eframe::egui::Color32::from_rgb(170, 176, 188),
+            color: Color::from_rgb8(170, 176, 188),
             plain: Some(text),
         })
     }
@@ -176,7 +173,7 @@ impl Render for element::Failure {
     fn render(&self) -> Option<Shown> {
         Some(Shown {
             text: Presentation::new(self.to_string()),
-            color: eframe::egui::Color32::from_rgb(255, 123, 114),
+            color: Color::from_rgb8(255, 123, 114),
             plain: None,
         })
     }

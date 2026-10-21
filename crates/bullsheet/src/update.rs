@@ -1,5 +1,6 @@
-use crate::render::Presentation;
-use element::Failure;
+use std::sync::{Arc, Mutex};
+
+use element::Text;
 
 const OWNER: &str = "liagha";
 const REPOSITORY: &str = "bullsheet";
@@ -13,61 +14,43 @@ const TARGET: &str = if cfg!(target_os = "windows") {
     "linux-x86_64"
 };
 
-#[derive(Debug)]
-pub struct Version(Presentation);
-
-impl Version {
-    pub fn current() -> Self {
-        Self(Presentation::new(env!("CARGO_PKG_VERSION")))
-    }
-
-    fn new(version: impl Into<String>) -> Self {
-        Self(Presentation::new(version))
-    }
+#[derive(Clone)]
+pub struct Update {
+    state: Arc<Mutex<Option<Text>>>,
 }
 
-impl std::fmt::Display for Version {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.0)
-    }
-}
-
-#[derive(Debug)]
-pub enum Report {
-    Current,
-    Updated(Version),
-    Failed(Failure),
-}
-
-pub struct Updater {
-    reports: std::sync::mpsc::Receiver<Report>,
-}
-
-impl Updater {
-    pub fn new(context: &eframe::egui::Context) -> Self {
-        let (sender, reports) = std::sync::mpsc::channel();
-        let wake = context.clone();
+impl Update {
+    pub fn new(wake: impl Fn() + Send + 'static) -> Self {
+        let state = Arc::new(Mutex::new(None));
+        let worker = Arc::clone(&state);
         std::thread::spawn(move || {
-            let _ = sender.send(Self::install());
-            wake.request_repaint();
+            let message = Self::install_newer();
+            if let Ok(mut slot) = worker.lock() {
+                *slot = Some(message);
+            }
+            wake();
         });
-        Self { reports }
+        Self { state }
     }
 
-    pub fn report(&self) -> Option<Report> {
-        self.reports.try_recv().ok()
+    pub fn text(&self) -> Text {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| state.clone())
+            .unwrap_or_else(|| Text::new("checking"))
     }
 
-    fn install() -> Report {
+    fn install_newer() -> Text {
         use self_update::VersionStatus;
-        use self_update::backends::github::Update;
-        let current = Version::current();
-        let mut builder = Update::configure();
+        use self_update::backends::github::Update as Release;
+        let current = env!("CARGO_PKG_VERSION");
+        let mut builder = Release::configure();
         builder
             .repo_owner(OWNER)
             .repo_name(REPOSITORY)
             .bin_name(PROGRAM)
-            .current_version(current.to_string())
+            .current_version(current)
             .target(TARGET)
             .show_download_progress(false)
             .show_output(false)
@@ -75,14 +58,16 @@ impl Updater {
         if cfg!(target_os = "macos") {
             builder.bundle_path_in_archive(BUNDLE);
         }
-        let update = match builder.build() {
-            Ok(update) => update,
-            Err(error) => return Report::Failed(Failure::new(error.to_string())),
+        let release = match builder.build() {
+            Ok(release) => release,
+            Err(error) => return Text::new(format!("update check failed: {error}")),
         };
-        match update.update() {
-            Ok(VersionStatus::Updated(version)) => Report::Updated(Version::new(version)),
-            Ok(_) => Report::Current,
-            Err(error) => Report::Failed(Failure::new(error.to_string())),
+        match release.update() {
+            Ok(VersionStatus::Updated(version)) => {
+                Text::new(format!("updated to {version} — restart to apply"))
+            }
+            Ok(_) => Text::new("up to date"),
+            Err(error) => Text::new(format!("update check failed: {error}")),
         }
     }
 }

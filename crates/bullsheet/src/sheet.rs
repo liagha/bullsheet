@@ -1,4 +1,5 @@
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use masonry::accesskit::{Node, Role};
@@ -40,11 +41,13 @@ const ROW_HOVER: Color = Color::from_rgb8(64, 68, 76);
 const TOOLTIP_BORDER: Color = Color::from_rgb8(86, 90, 100);
 
 const FONT_SIZE: f32 = 16.0;
+const LINE_HEIGHT: f64 = FONT_SIZE as f64 * 1.4;
 const RESULT_FONT_SIZE: f32 = 16.0;
 const TOP_HEIGHT: f64 = 32.0;
 const PADDING: f64 = 12.0;
 const MIN_GUTTER: f64 = 150.0;
 const MAX_GUTTER: f64 = 300.0;
+const SCROLLBAR_WIDTH: f64 = 8.0;
 const COMPLETION_ROW_HEIGHT: f64 = 24.0;
 
 const BLINK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -91,7 +94,7 @@ pub struct Sheet {
     typefaces: Typefaces,
 
     evaluated: String,
-    text_layouts: Vec<Layout<BrushIndex>>,
+    text_layouts: BTreeMap<usize, Layout<BrushIndex>>,
     line_ranges: Vec<Range<usize>>,
     hint_layout: Option<Layout<BrushIndex>>,
     hotkey_layout: Option<Layout<BrushIndex>>,
@@ -113,6 +116,7 @@ pub struct Sheet {
     hovered_result: Option<usize>,
     hovered_button: Option<u8>,
     drag_select: bool,
+    dragging_scrollbar: bool,
 
     completion: Option<Completion>,
     completion_rect: Option<Rect>,
@@ -145,7 +149,7 @@ impl Sheet {
             settings,
             typefaces,
             evaluated: String::new(),
-            text_layouts: Vec::new(),
+            text_layouts: BTreeMap::new(),
             line_ranges: Vec::new(),
             hint_layout: None,
             hotkey_layout: None,
@@ -164,6 +168,7 @@ impl Sheet {
             hovered_result: None,
             hovered_button: None,
             drag_select: false,
+            dragging_scrollbar: false,
             completion: None,
             completion_rect: None,
             update_seen,
@@ -192,17 +197,6 @@ impl Sheet {
         size.width - PADDING * 2.0 - self.gutter_width
     }
 
-    fn line_of(&self, byte: usize) -> Option<usize> {
-        self.line_ranges
-            .iter()
-            .position(|range| range.start <= byte && byte <= range.end)
-    }
-
-    fn layout_of(&self, byte: usize) -> Option<(&Layout<BrushIndex>, usize)> {
-        let line = self.line_of(byte)?;
-        Some((self.text_layouts.get(line)?, line))
-    }
-
     fn ime_area(&self) -> Rect {
         let focus = self.editor.raw_selection().focus().index();
         let area = match self.layout_of(focus) {
@@ -223,7 +217,7 @@ impl Sheet {
 
     fn byte_at(&self, x: f32, y: f64) -> Option<usize> {
         let row = self.row_at(y)?;
-        let layout = self.text_layouts.get(row)?;
+        let layout = self.text_layouts.get(&row)?;
         let index = Cursor::from_point(layout, x, y as f32).index();
         Some(self.line_ranges.get(row)?.start + index)
     }
@@ -235,9 +229,16 @@ impl Sheet {
         }
         self.evaluated = text.clone();
         self.scroll = self.scroll.min(self.scroll_max());
-        self.readings = self.engine.evaluate(&evaluator::Source::new(text));
+        let source_text = text.clone();
+        self.readings = self.engine.evaluate(&evaluator::Source::new(source_text));
         self.text_layouts.clear();
         self.line_ranges.clear();
+        self.brushes = vec![BASE.into()];
+        let mut line_start = 0usize;
+        for line in text.split('\n') {
+            self.line_ranges.push(line_start..line_start + line.len());
+            line_start += line.len() + 1;
+        }
     }
 
     fn build_text(
@@ -246,16 +247,32 @@ impl Sheet {
         lcx: &mut LayoutContext<BrushIndex>,
         width: f64,
     ) {
-        if !self.text_layouts.is_empty() {
+        if self.line_ranges.is_empty() {
             return;
         }
         let text = self.text();
-        self.brushes = vec![BASE.into()];
-
-        let mut layouts: Vec<Layout<BrushIndex>> = Vec::new();
-        let mut ranges: Vec<Range<usize>> = Vec::new();
-        let mut line_start = 0usize;
-        for (index, line) in text.split('\n').enumerate() {
+        let first_visible = self
+            .row_tops
+            .iter()
+            .enumerate()
+            .find(|(_, top)| *top + LINE_HEIGHT > self.scroll)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let last_visible = self
+            .row_tops
+            .iter()
+            .enumerate()
+            .rfind(|(_, top)| **top < self.scroll + self.viewport_height)
+            .map(|(i, _)| i)
+            .unwrap_or(self.line_ranges.len().saturating_sub(1));
+        let start_line = first_visible;
+        let end_line = last_visible.min(self.line_ranges.len() - 1);
+        for index in start_line..=end_line {
+            if self.text_layouts.contains_key(&index) {
+                continue;
+            }
+            let range = &self.line_ranges[index];
+            let line = &text[range.start..range.end];
             let boundaries: Vec<usize> = line
                 .char_indices()
                 .map(|(byte, _)| byte)
@@ -339,13 +356,8 @@ impl Sheet {
             let mut layout = builder.build(line);
             layout.break_all_lines(None);
             layout.align(Some(width as f32), Alignment::Start, AlignmentOptions::default());
-            layouts.push(layout);
-            ranges.push(line_start..line_start + line.len());
-            line_start += line.len() + 1;
+            self.text_layouts.insert(index, layout);
         }
-
-        self.text_layouts = layouts;
-        self.line_ranges = ranges;
     }
 
     fn build_results(
@@ -392,18 +404,15 @@ impl Sheet {
         self.row_tops.clear();
         self.row_heights.clear();
         let mut top = 0.0;
-        for layout in &self.text_layouts {
-            for line in layout.lines() {
-                let height = line.metrics().line_height as f64;
-                self.row_tops.push(top);
-                self.row_heights.push(height);
-                top += height;
-            }
+        for _ in &self.line_ranges {
+            self.row_tops.push(top);
+            self.row_heights.push(LINE_HEIGHT);
+            top += LINE_HEIGHT;
         }
         if self.row_tops.is_empty() {
             self.row_tops.push(0.0);
-            self.row_heights.push(FONT_SIZE as f64 * 1.4);
-            top = FONT_SIZE as f64 * 1.4;
+            self.row_heights.push(LINE_HEIGHT);
+            top = LINE_HEIGHT;
         }
         self.content_height = top;
     }
@@ -433,42 +442,15 @@ impl Sheet {
         top + height > self.scroll && top < self.scroll + self.viewport_height
     }
 
-    fn line(&self, index: usize) -> String {
-        self.text().split('\n').nth(index).unwrap_or("").to_owned()
+    fn line_of(&self, byte: usize) -> Option<usize> {
+        self.line_ranges
+            .iter()
+            .position(|range| range.start <= byte && byte <= range.end)
     }
 
-    fn locate(&self, byte: usize) -> Option<String> {
-        let text = self.text();
-        let mut line_start = 0usize;
-        let mut line_index = 0usize;
-        for line in text.split('\n') {
-            if byte <= line_start + line.len() {
-                let local_bytes = byte - line_start;
-                let character = line[..local_bytes.min(line.len())].chars().count();
-                let reading = self.readings.get(line_index)?;
-                let part = reading
-                    .parts()
-                    .iter()
-                    .find(|part| part.span().contains(&character))?;
-                let span = part.span();
-                let word: String = line
-                    .chars()
-                    .skip(span.start)
-                    .take(span.end - span.start)
-                    .collect();
-                return Some(match self.renderers.render(part.value()) {
-                    Some(shown) => format!(
-                        "{} {} — ctrl-click copies",
-                        part.value().describe(),
-                        shown.text
-                    ),
-                    None => word,
-                });
-            }
-            line_start += line.len() + 1;
-            line_index += 1;
-        }
-        None
+    fn layout_of(&self, byte: usize) -> Option<(&Layout<BrushIndex>, usize)> {
+        let line = self.line_of(byte)?;
+        self.text_layouts.get(&line).map(|layout| (layout, line))
     }
 
     fn selection_in(
@@ -516,7 +498,7 @@ impl Sheet {
             if local.x >= 0.0
                 && local.y >= 0.0
                 && let Some(row) = self.row_at(local.y)
-                && let Some(layout) = self.text_layouts.get(row)
+                && let Some(layout) = self.text_layouts.get(&row)
             {
                 let cursor = Cursor::from_point(layout, local.x as f32, local.y as f32);
                 let index = self.line_ranges[row].start + cursor.index();
@@ -632,6 +614,73 @@ impl Sheet {
         }
         completion.selected = (completion.selected as isize + delta).rem_euclid(count) as usize;
     }
+
+    fn line(&self, index: usize) -> String {
+        self.text().split('\n').nth(index).unwrap_or("").to_owned()
+    }
+
+    fn locate(&self, byte: usize) -> Option<String> {
+        let text = self.text();
+        let mut line_start = 0usize;
+        let mut line_index = 0usize;
+        for line in text.split('\n') {
+            if byte <= line_start + line.len() {
+                let local_bytes = byte - line_start;
+                let character = line[..local_bytes.min(line.len())].chars().count();
+                let reading = self.readings.get(line_index)?;
+                let part = reading
+                    .parts()
+                    .iter()
+                    .find(|part| part.span().contains(&character))?;
+                let span = part.span();
+                let word: String = line
+                    .chars()
+                    .skip(span.start)
+                    .take(span.end - span.start)
+                    .collect();
+                return Some(match self.renderers.render(part.value()) {
+                    Some(shown) => format!(
+                        "{} {} — ctrl-click copies",
+                        part.value().describe(),
+                        shown.text
+                    ),
+                    None => word,
+                });
+            }
+            line_start += line.len() + 1;
+            line_index += 1;
+        }
+        None
+    }
+}
+
+fn draw_scrollbar(sheet: &Sheet, scene: &mut Scene, size: Size) {
+    let max_scroll = sheet.scroll_max();
+    if max_scroll <= 0.0 {
+        return;
+    }
+    let track_top = TOP_HEIGHT;
+    let track_bottom = size.height;
+    let track_height = track_bottom - track_top;
+    let thumb_height = (track_height * (sheet.viewport_height / sheet.content_height)).max(30.0);
+    let thumb_top = track_top + sheet.scroll * (track_height - thumb_height) / max_scroll;
+    let thumb_bottom = thumb_top + thumb_height;
+    let x0 = size.width - SCROLLBAR_WIDTH;
+    let x1 = size.width;
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgb8(48, 48, 48),
+        None,
+        &Rect::new(x0, track_top, x1, track_bottom),
+    );
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgb8(86, 90, 100),
+        None,
+        &Rect::new(x0, thumb_top, x1, thumb_bottom).to_rounded_rect(4.0),
+    );
 }
 
 impl Widget for Sheet {
@@ -676,6 +725,22 @@ impl Widget for Sheet {
                         self.submit(ctx, SheetAction::Hide);
                     } else {
                         self.submit(ctx, SheetAction::DragWindow);
+                    }
+                    ctx.set_handled();
+                    return;
+                }
+
+                let track_x0 = size.width - SCROLLBAR_WIDTH;
+                if position.x >= track_x0 && position.y >= TOP_HEIGHT && position.y <= size.height {
+                    let max_scroll = self.scroll_max();
+                    if max_scroll > 0.0 {
+                        let track_height = size.height - TOP_HEIGHT;
+                        let thumb_height = (track_height * (self.viewport_height / self.content_height)).max(30.0);
+                        let click_scroll = (position.y - TOP_HEIGHT - thumb_height / 2.0) * max_scroll / (track_height - thumb_height);
+                        self.scroll = click_scroll.clamp(0.0, max_scroll);
+                        ctx.request_layout();
+                        self.dragging_scrollbar = true;
+                        ctx.capture_pointer();
                     }
                     ctx.set_handled();
                     return;
@@ -742,9 +807,21 @@ impl Widget for Sheet {
             }
             PointerEvent::Up(PointerButtonEvent { .. }) => {
                 self.drag_select = false;
+                self.dragging_scrollbar = false;
             }
             PointerEvent::Move(PointerUpdate { current, .. }) => {
                 let position = ctx.local_position(current.position);
+                if self.dragging_scrollbar {
+                    let max_scroll = self.scroll_max();
+                    if max_scroll > 0.0 {
+                        let track_height = size.height - TOP_HEIGHT;
+                        let thumb_height = (track_height * (self.viewport_height / self.content_height)).max(30.0);
+                        let click_scroll = (position.y - TOP_HEIGHT - thumb_height / 2.0) * max_scroll / (track_height - thumb_height);
+                        self.scroll = click_scroll.clamp(0.0, max_scroll);
+                        ctx.request_layout();
+                    }
+                    return;
+                }
                 if self.completion.is_some()
                     && let Some(rect) = self.completion_rect
                     && rect.contains(position)
@@ -1215,7 +1292,7 @@ impl Widget for Sheet {
             } else {
                 Color::from_rgb8(52, 52, 52)
             };
-            for (index, layout) in self.text_layouts.iter().enumerate() {
+            for (&index, layout) in &self.text_layouts {
                 if !self.visible(index) {
                     continue;
                 }
@@ -1234,7 +1311,7 @@ impl Widget for Sheet {
             }
         }
 
-        for (index, layout) in self.text_layouts.iter().enumerate() {
+        for (&index, layout) in &self.text_layouts {
             if !self.visible(index) {
                 continue;
             }
@@ -1285,6 +1362,8 @@ impl Widget for Sheet {
             );
         }
         scene.pop_layer();
+
+        draw_scrollbar(self, scene, size);
 
         let gutter_right = self.gutter_right(size);
         for (index, row) in self.results.iter().enumerate() {

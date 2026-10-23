@@ -219,7 +219,57 @@ impl Session {
         }
         names.sort_by(|left, right| left.text.as_ref().cmp(right.text.as_ref()));
         names.extend(self.language.registry.names());
+        names.extend(self.key_names());
         names
+    }
+
+    fn key_names(&self) -> Vec<Name> {
+        let mut names: Vec<Name> = [
+            (element::Modifiers::CONTROL, "Ctrl"),
+            (element::Modifiers::ALT, "Alt"),
+            (element::Modifiers::SHIFT, "Shift"),
+            (element::Modifiers::SUPER, "Super"),
+        ]
+        .into_iter()
+        .map(|(modifiers, text)| Name {
+            text: Text::new(text),
+            value: Value::new(element::Key::modifier(modifiers)),
+        })
+        .collect();
+        for text in [
+            "Space", "Enter", "Escape", "Tab", "Backspace", "Delete", "Insert", "Home", "End",
+            "PageUp", "PageDown", "Left", "Right", "Up", "Down",
+        ] {
+            names.push(Name {
+                text: Text::new(text),
+                value: Value::new(element::Key::new(element::Modifiers::NONE, Text::new(text))),
+            });
+        }
+        for number in 1..=24 {
+            names.push(Self::function_key(number));
+        }
+        for letter in b'A'..=b'Z' {
+            let text = (letter as char).to_string();
+            names.push(Name {
+                text: Text::new(text.as_str()),
+                value: Value::new(element::Key::new(
+                    element::Modifiers::NONE,
+                    Text::new(text.as_str()),
+                )),
+            });
+        }
+        names
+    }
+
+    fn function_key(number: u8) -> Name {
+        let text = format!("F{number}");
+        Name {
+            text: Text::new(text.as_str()),
+            value: Value::new(element::Key::new(
+                element::Modifiers::NONE,
+                Text::new(text.as_str()),
+            )),
+        }
     }
 }
 

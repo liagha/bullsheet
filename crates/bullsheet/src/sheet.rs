@@ -567,15 +567,12 @@ impl Sheet {
         let Some(word) = Word::ending_at(&element::Text::new(&text), cursor) else {
             return;
         };
-        let entries: Vec<(String, String)> = self
+        let prefix = word.text().as_ref().to_lowercase();
+        let mut entries: Vec<(String, String)> = self
             .readings
             .names()
             .iter()
-            .filter(|name| {
-                let text = name.text().as_ref();
-                text.starts_with(word.text().as_ref()) && text != word.text().as_ref()
-            })
-            .take(8)
+            .filter(|name| name.text().as_ref().to_lowercase().starts_with(&prefix))
             .map(|name| {
                 (
                     name.text().to_string(),
@@ -586,6 +583,10 @@ impl Sheet {
         if entries.is_empty() {
             return;
         }
+        entries.sort_by(|left, right| {
+            left.0.to_lowercase().cmp(&right.0.to_lowercase())
+        });
+        entries.truncate(8);
         let selected = match previous {
             Some(previous) if previous.range == word.range() => {
                 previous.selected.min(entries.len() - 1)
@@ -828,7 +829,7 @@ impl Widget for Sheet {
                             ctx.set_handled();
                             return;
                         }
-                        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
+                        Key::Named(NamedKey::Tab) => {
                             if self.accept_completion(ctx) {
                                 ctx.set_handled();
                                 return;

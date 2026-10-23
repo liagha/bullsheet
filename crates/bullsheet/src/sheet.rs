@@ -8,10 +8,10 @@ use masonry::core::{
     PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, ScrollDelta, StyleProperty, TextEvent,
     Widget, WidgetId, render_text,
 };
-use masonry::core::keyboard::{Key, KeyState, NamedKey};
+use masonry::core::keyboard::{Code, Key, KeyState, NamedKey};
 use masonry::kurbo::{Affine, Line, Point, Rect, Size, Stroke};
 use masonry::parley::layout::Layout;
-use masonry::parley::{Alignment, AlignmentOptions, Cursor, LayoutContext, PlainEditor};
+use masonry::parley::{Affinity, Alignment, AlignmentOptions, Cursor, LayoutContext, PlainEditor, Selection};
 use masonry::peniko::{Color, Fill};
 use masonry::vello::Scene;
 use tracing::Span;
@@ -91,7 +91,8 @@ pub struct Sheet {
     typefaces: Typefaces,
 
     evaluated: String,
-    text_layout: Option<Layout<BrushIndex>>,
+    text_layouts: Vec<Layout<BrushIndex>>,
+    line_ranges: Vec<Range<usize>>,
     hint_layout: Option<Layout<BrushIndex>>,
     hotkey_layout: Option<Layout<BrushIndex>>,
     brushes: Vec<masonry::peniko::Brush>,
@@ -144,7 +145,8 @@ impl Sheet {
             settings,
             typefaces,
             evaluated: String::new(),
-            text_layout: None,
+            text_layouts: Vec::new(),
+            line_ranges: Vec::new(),
             hint_layout: None,
             hotkey_layout: None,
             brushes: Vec::new(),
@@ -190,9 +192,24 @@ impl Sheet {
         size.width - PADDING * 2.0 - self.gutter_width
     }
 
+    fn line_of(&self, byte: usize) -> Option<usize> {
+        self.line_ranges
+            .iter()
+            .position(|range| range.start <= byte && byte <= range.end)
+    }
+
+    fn layout_of(&self, byte: usize) -> Option<(&Layout<BrushIndex>, usize)> {
+        let line = self.line_of(byte)?;
+        Some((self.text_layouts.get(line)?, line))
+    }
+
     fn ime_area(&self) -> Rect {
-        let area = match &self.text_layout {
-            Some(layout) => self.editor.raw_selection().focus().geometry(layout, 0.),
+        let focus = self.editor.raw_selection().focus().index();
+        let area = match self.layout_of(focus) {
+            Some((layout, line)) => {
+                let local = focus - self.line_ranges[line].start;
+                Cursor::from_byte_index(layout, local, Affinity::Downstream).geometry(layout, 0.)
+            }
             None => self.editor.ime_cursor_area(),
         };
         let origin = self.editor_origin();
@@ -204,9 +221,11 @@ impl Sheet {
         )
     }
 
-    fn byte_at(&self, x: f32, y: f32) -> Option<usize> {
-        let layout = self.text_layout.as_ref()?;
-        Some(Cursor::from_point(layout, x, y).index())
+    fn byte_at(&self, x: f32, y: f64) -> Option<usize> {
+        let row = self.row_at(y)?;
+        let layout = self.text_layouts.get(row)?;
+        let index = Cursor::from_point(layout, x, y as f32).index();
+        Some(self.line_ranges.get(row)?.start + index)
     }
 
     fn revaluate_if_needed(&mut self) {
@@ -217,7 +236,8 @@ impl Sheet {
         self.evaluated = text.clone();
         self.scroll = self.scroll.min(self.scroll_max());
         self.readings = self.engine.evaluate(&evaluator::Source::new(text));
-        self.text_layout = None;
+        self.text_layouts.clear();
+        self.line_ranges.clear();
     }
 
     fn build_text(
@@ -226,19 +246,20 @@ impl Sheet {
         lcx: &mut LayoutContext<BrushIndex>,
         width: f64,
     ) {
-        if self.text_layout.is_some() {
+        if !self.text_layouts.is_empty() {
             return;
         }
         let text = self.text();
         self.brushes = vec![BASE.into()];
 
-        let mut runs: Vec<Run> = Vec::new();
+        let mut layouts: Vec<Layout<BrushIndex>> = Vec::new();
+        let mut ranges: Vec<Range<usize>> = Vec::new();
         let mut line_start = 0usize;
         for (index, line) in text.split('\n').enumerate() {
             let boundaries: Vec<usize> = line
                 .char_indices()
-                .map(|(byte, _)| line_start + byte)
-                .chain(std::iter::once(line_start + line.len()))
+                .map(|(byte, _)| byte)
+                .chain(std::iter::once(line.len()))
                 .collect();
             let characters: Vec<char> = line.chars().collect();
             let mut colors = vec![BASE; characters.len()];
@@ -278,6 +299,7 @@ impl Sheet {
             }
 
             let writings = Writing::each(&characters);
+            let mut runs: Vec<Run> = Vec::new();
             let mut start = 0usize;
             for position in 1..=characters.len() {
                 if position < characters.len()
@@ -293,33 +315,37 @@ impl Sheet {
                 });
                 start = position;
             }
+
+            let mut builder = lcx.ranged_builder(fcx, line, 1.0, true);
+            builder.push_default(StyleProperty::FontStack(
+                self.typefaces.stack(Writing::Latin).clone(),
+            ));
+            builder.push_default(StyleProperty::FontSize(FONT_SIZE));
+            for run in runs {
+                if run.span.start < run.span.end
+                    && run.span.end <= line.len()
+                    && line.is_char_boundary(run.span.start)
+                    && line.is_char_boundary(run.span.end)
+                {
+                    let brush = self.brushes.len();
+                    self.brushes.push(run.color.into());
+                    builder.push(StyleProperty::Brush(BrushIndex(brush)), run.span.clone());
+                    builder.push(
+                        StyleProperty::FontStack(self.typefaces.stack(run.writing).clone()),
+                        run.span,
+                    );
+                }
+            }
+            let mut layout = builder.build(line);
+            layout.break_all_lines(None);
+            layout.align(Some(width as f32), Alignment::Start, AlignmentOptions::default());
+            layouts.push(layout);
+            ranges.push(line_start..line_start + line.len());
             line_start += line.len() + 1;
         }
 
-        let mut builder = lcx.ranged_builder(fcx, &text, 1.0, true);
-        builder.push_default(StyleProperty::FontStack(
-            self.typefaces.stack(Writing::Latin).clone(),
-        ));
-        builder.push_default(StyleProperty::FontSize(FONT_SIZE));
-        for run in runs {
-            if run.span.start < run.span.end
-                && run.span.end <= text.len()
-                && text.is_char_boundary(run.span.start)
-                && text.is_char_boundary(run.span.end)
-            {
-                let brush = self.brushes.len();
-                self.brushes.push(run.color.into());
-                builder.push(StyleProperty::Brush(BrushIndex(brush)), run.span.clone());
-                builder.push(
-                    StyleProperty::FontStack(self.typefaces.stack(run.writing).clone()),
-                    run.span,
-                );
-            }
-        }
-        let mut layout = builder.build(&text);
-        layout.break_all_lines(None);
-        layout.align(Some(width as f32), Alignment::Start, AlignmentOptions::default());
-        self.text_layout = Some(layout);
+        self.text_layouts = layouts;
+        self.line_ranges = ranges;
     }
 
     fn build_results(
@@ -366,7 +392,7 @@ impl Sheet {
         self.row_tops.clear();
         self.row_heights.clear();
         let mut top = 0.0;
-        if let Some(layout) = &self.text_layout {
+        for layout in &self.text_layouts {
             for line in layout.lines() {
                 let height = line.metrics().line_height as f64;
                 self.row_tops.push(top);
@@ -395,6 +421,16 @@ impl Sheet {
             top += height;
         }
         None
+    }
+
+    fn visible(&self, index: usize) -> bool {
+        let Some(&top) = self.row_tops.get(index) else {
+            return false;
+        };
+        let Some(&height) = self.row_heights.get(index) else {
+            return false;
+        };
+        top + height > self.scroll && top < self.scroll + self.viewport_height
     }
 
     fn line(&self, index: usize) -> String {
@@ -435,6 +471,25 @@ impl Sheet {
         None
     }
 
+    fn selection_in(
+        &self,
+        layout: &Layout<BrushIndex>,
+        line: usize,
+    ) -> Option<Vec<(masonry::parley::BoundingBox, usize)>> {
+        let range = self.line_ranges.get(line)?;
+        let anchor = self.editor.raw_selection().anchor().index();
+        let focus = self.editor.raw_selection().focus().index();
+        let start = anchor.max(range.start).min(range.end);
+        let end = focus.max(range.start).min(range.end);
+        if start == end {
+            return None;
+        }
+        let anchor =
+            Cursor::from_byte_index(layout, start - range.start, Affinity::Downstream);
+        let focus = Cursor::from_byte_index(layout, end - range.start, Affinity::Downstream);
+        Some(Selection::new(anchor, focus).geometry(layout))
+    }
+
     fn update_hover(&mut self, position: Point, size: Size) -> bool {
         let previous = self.hover.as_ref().map(|hover| hover.text.clone());
         let previous_result = self.hovered_result;
@@ -460,10 +515,12 @@ impl Sheet {
             let local = Point::new(position.x - origin.x, position.y - origin.y);
             if local.x >= 0.0
                 && local.y >= 0.0
-                && let Some(layout) = &self.text_layout
+                && let Some(row) = self.row_at(local.y)
+                && let Some(layout) = self.text_layouts.get(row)
             {
                 let cursor = Cursor::from_point(layout, local.x as f32, local.y as f32);
-                self.hover = self.locate(cursor.index()).map(|text| Hover { text, position });
+                let index = self.line_ranges[row].start + cursor.index();
+                self.hover = self.locate(index).map(|text| Hover { text, position });
             }
         }
 
@@ -658,7 +715,7 @@ impl Widget for Sheet {
                     return;
                 }
                 let (fctx, lctx) = ctx.text_contexts();
-                let index = self.byte_at(x, y);
+                    let index = self.byte_at(x, y as f64);
                 let mut driver = self.editor.driver(fctx, lctx);
                 match state.count {
                     2 => driver.select_word_at_point(x, y),
@@ -715,7 +772,7 @@ impl Widget for Sheet {
                     let x = (position.x - origin.x) as f32;
                     let y = (position.y - origin.y) as f32;
                     let (fctx, lctx) = ctx.text_contexts();
-                    let index = self.byte_at(x, y);
+                    let index = self.byte_at(x, y as f64);
                     let mut driver = self.editor.driver(fctx, lctx);
                     if let Some(index) = index {
                         driver.extend_selection_to_byte(index);
@@ -807,12 +864,12 @@ impl Widget for Sheet {
                         ctx.set_handled();
                         return;
                     }
-                    Key::Character(c) if action_mod && c.as_str().eq_ignore_ascii_case("q") => {
+                    Key::Character(_) if action_mod && key_event.code == Code::KeyQ => {
                         self.submit(ctx, SheetAction::Quit);
                         ctx.set_handled();
                         return;
                     }
-                    Key::Character(c) if action_mod && c.as_str().eq_ignore_ascii_case("x") => {
+                    Key::Character(_) if action_mod && key_event.code == Code::KeyX => {
                         if let Some(text) = self.editor.selected_text()
                             && !text.is_empty()
                         {
@@ -822,14 +879,14 @@ impl Widget for Sheet {
                             ctx.set_clipboard(text);
                         }
                     }
-                    Key::Character(c) if action_mod && c.as_str().eq_ignore_ascii_case("c") => {
+                    Key::Character(_) if action_mod && key_event.code == Code::KeyC => {
                         if let Some(text) = self.editor.selected_text()
                             && !text.is_empty()
                         {
                             ctx.set_clipboard(text.to_string());
                         }
                     }
-                    Key::Character(a) if action_mod && a.as_str().eq_ignore_ascii_case("a") => {
+                    Key::Character(_) if action_mod && key_event.code == Code::KeyA => {
                         let mut driver = self.editor.driver(fctx, lctx);
                         if shift {
                             driver.collapse_selection();
@@ -1064,7 +1121,8 @@ impl Widget for Sheet {
         if update != self.update_seen {
             self.update_seen = update;
             self.evaluated.clear();
-            self.text_layout = None;
+            self.text_layouts.clear();
+            self.line_ranges.clear();
             let (fcx, lctx) = ctx.text_contexts();
             self.revaluate_if_needed();
             self.build_text(fcx, lctx, self.width);
@@ -1142,29 +1200,46 @@ impl Widget for Sheet {
 
         let origin = self.editor_origin();
 
-        if ctx.is_focus_target()
-            && let Some(layout) = &self.text_layout
-        {
+        let viewport = Rect::new(
+            PADDING,
+            TOP_HEIGHT,
+            PADDING + self.width,
+            size.height,
+        );
+        scene.push_clip_layer(Affine::IDENTITY, &viewport);
+
+        if ctx.is_focus_target() {
             let selection_color = if ctx.is_window_focused() {
                 Color::from_rgb8(72, 72, 72)
             } else {
                 Color::from_rgb8(52, 52, 52)
             };
-            for (area, _) in self.editor.raw_selection().geometry(layout) {
-                let rect = Rect::new(
-                    origin.x + area.x0 as f64,
-                    origin.y + area.y0 as f64,
-                    origin.x + area.x1 as f64,
-                    origin.y + area.y1 as f64,
-                );
-                scene.fill(Fill::NonZero, Affine::IDENTITY, selection_color, None, &rect);
+            for (index, layout) in self.text_layouts.iter().enumerate() {
+                if !self.visible(index) {
+                    continue;
+                }
+                let Some(area) = self.selection_in(layout, index) else {
+                    continue;
+                };
+                for (area, _) in area {
+                    let rect = Rect::new(
+                        origin.x + area.x0 as f64,
+                        origin.y + area.y0 as f64 + self.row_tops[index],
+                        origin.x + area.x1 as f64,
+                        origin.y + area.y1 as f64 + self.row_tops[index],
+                    );
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, selection_color, None, &rect);
+                }
             }
         }
 
-        if let Some(layout) = &self.text_layout {
+        for (index, layout) in self.text_layouts.iter().enumerate() {
+            if !self.visible(index) {
+                continue;
+            }
             render_text(
                 scene,
-                Affine::translate((origin.x, origin.y)),
+                Affine::translate((origin.x, origin.y + self.row_tops[index])),
                 layout,
                 &self.brushes,
                 true,
@@ -1186,14 +1261,19 @@ impl Widget for Sheet {
         if ctx.is_focus_target()
             && self.cursor_visible
             && ctx.is_window_focused()
-            && let Some(layout) = &self.text_layout
+            && let Some((layout, line)) = self.layout_of(
+                self.editor.raw_selection().focus().index(),
+            )
         {
-            let cursor = self.editor.raw_selection().focus().geometry(layout, 1.5);
+            let focus = self.editor.raw_selection().focus().index();
+            let local = focus - self.line_ranges[line].start;
+            let cursor =
+                Cursor::from_byte_index(layout, local, Affinity::Downstream).geometry(layout, 1.5);
             let rect = Rect::new(
                 origin.x + cursor.x0 as f64,
-                origin.y + cursor.y0 as f64,
+                origin.y + cursor.y0 as f64 + self.row_tops[line],
                 origin.x + cursor.x1 as f64,
-                origin.y + cursor.y1 as f64,
+                origin.y + cursor.y1 as f64 + self.row_tops[line],
             );
             scene.fill(
                 Fill::NonZero,
@@ -1203,6 +1283,7 @@ impl Widget for Sheet {
                 &rect,
             );
         }
+        scene.pop_layer();
 
         let gutter_right = self.gutter_right(size);
         for (index, row) in self.results.iter().enumerate() {
